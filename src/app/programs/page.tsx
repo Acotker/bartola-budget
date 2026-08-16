@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getProgramsView } from "@/lib/data";
 import { getSessionUserId } from "@/lib/auth";
+import { cancelProgramAction } from "@/app/actions";
 import { formatCents, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,14 @@ export default async function ProgramsPage() {
         Money set aside from your pool. Spending here never touches your daily.
       </p>
 
-      <ul className="mt-6 space-y-3">
+      <Link
+        href="/programs/new"
+        className="border-primary text-primary mt-5 flex h-11 items-center justify-center rounded-full border text-sm font-bold"
+      >
+        + Add a budget
+      </Link>
+
+      <ul className="mt-4 space-y-3">
         {view.cards.map((c) => {
           const available = c.balanceCents;
           return (
@@ -46,6 +54,10 @@ export default async function ProgramsPage() {
                   positive={available >= 0}
                 />
               </div>
+              <form action={cancelProgramAction} className="mt-3 text-right">
+                <input type="hidden" name="programId" value={c.id} />
+                <button className="text-ink/40 text-xs font-bold">Remove</button>
+              </form>
             </li>
           );
         })}
