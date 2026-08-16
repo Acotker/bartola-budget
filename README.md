@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Bartola Budget
 
-## Getting Started
+A daily **Safe-to-Spend** budgeting app for people living off a fixed pool of money over a fixed period. Open the app, see one number, know whether you can afford the thing.
 
-First, run the development server:
+Spec: [`BARTOLA-BUDGET-BUILD-BRIEF.md`](./BARTOLA-BUDGET-BUILD-BRIEF.md) · Plan: [`IMPLEMENTATION-PLAN-V1.md`](./IMPLEMENTATION-PLAN-V1.md)
+
+## Stack
+
+Next.js 16 (App Router, React 19, TypeScript) · Tailwind CSS v4 · Prisma · Vitest · Luxon (America/New_York) · decimal.js · self-built auth (jose + bcryptjs).
+
+## Run it locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run db:seed     # creates the SQLite DB + the "Maria" demo user
+npm run dev         # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**Demo login:** `maria@demo.bartola` / `demo1234`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The `.env` needs `DATABASE_URL` (SQLite: `file:./dev.db`) and `AUTH_SECRET` (any long random string).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Scripts
 
-## Learn More
+| Command | What it does |
+|---|---|
+| `npm test` | Engine unit tests — reproduces the brief's Section 5 examples to the cent |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |
+| `npm run db:seed` | Seed the demo user + plan |
 
-To learn more about Next.js, take a look at the following resources:
+## Architecture
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **`src/engine/`** — the pure, isolated, unit-tested recalculation engine. Integer cents, no I/O, no framework imports. This is the product; everything else is packaging.
+- **`src/lib/data.ts`** — data-access layer: maps the DB to the engine's input, always scoped by `userId`.
+- **`src/app/actions.ts`, `auth-actions.ts`** — Server Actions (each verifies the session and ownership).
+- **`src/app/*`** — screens: `/login`, `/onboarding`, `/` (Home), `/log`, `/programs`, `/programs/new`, `/programs/[id]`, `/settings`, `/history`.
+- **`src/app/api/rollover`** — the daily rollover job (point a cron at it).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The demo clock is hardcoded (`APP_ASOF` in `src/lib/data.ts`) because the demo plan runs Sep 2026–Aug 2027; in production this becomes the current date in America/New_York.
 
-## Deploy on Vercel
+## Deploying to Vercel (Postgres)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+SQLite is for local/hackathon use. For a real deploy, switch to Postgres (serverless filesystems are read-only):
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Provision Postgres (Neon via the Vercel integration is one click; it injects `DATABASE_URL`).
+2. In `prisma/schema.prisma`, change the datasource provider:
+   ```prisma
+   datasource db {
+     provider = "postgresql"
+     url      = env("DATABASE_URL")
+   }
+   ```
+3. `npx prisma migrate deploy` (or `migrate dev` to create the first Postgres migration).
+4. Set `AUTH_SECRET` in Vercel env vars.
+5. Deploy. `postinstall` runs `prisma generate` automatically.
+
+## Status
+
+All gates green: `npm test` (engine reconciles the brief to the cent), `npm run build`, `npm run lint`.
+
+**Open items:** confirm the brand purple (`#5B21EE` is a placeholder), and the Postgres swap above for production.
