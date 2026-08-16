@@ -138,6 +138,9 @@ export interface HomeView {
   comingUp: { date: string; name: string; amountCents: number }[];
   comingUpTotal: number;
   nextOccurrenceDate: string | null;
+  // Spent today — the transactions logged today (tap to edit)
+  spentToday: SpentTodayEntry[];
+  spentTodayTotalCents: number;
   // for the reporting flow / new-program screen
   programs: { id: string; name: string }[];
 }
@@ -188,6 +191,25 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     )
     .sort((a, b) => (a.date < b.date ? -1 : 1));
 
+  // Today's logged transactions (newest first), for the editable "Spent today".
+  const nameById = new Map(input.programs.map((p) => [p.id, p.name]));
+  const spentToday: SpentTodayEntry[] = input.spends
+    .filter((s) => s.date === APP_ASOF)
+    .map((s) => ({
+      id: s.id,
+      label:
+        s.type === "program"
+          ? nameById.get(s.programSpendId ?? "") ?? "Program Spend"
+          : "Safe to Spend",
+      amountCents: s.amountCents,
+      note: s.note ?? null,
+    }))
+    .reverse();
+  const spentTodayTotalCents = spentToday.reduce(
+    (sum, s) => sum + s.amountCents,
+    0,
+  );
+
   return {
     planId: plan.id,
     input,
@@ -203,9 +225,39 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     comingUp: comingAll.slice(0, 3),
     comingUpTotal: comingAll.length,
     nextOccurrenceDate: comingAll[0]?.date ?? null,
+    spentToday,
+    spentTodayTotalCents,
     programs: input.programs
       .filter((p) => p.status === "active")
       .map((p) => ({ id: p.id, name: p.name })),
+  };
+}
+
+export interface SpendEntryDetail {
+  id: string;
+  amountCents: number;
+  type: string;
+  note: string | null;
+  date: string;
+  programName: string | null;
+}
+
+export async function getSpendEntry(
+  userId: string,
+  id: string,
+): Promise<SpendEntryDetail | null> {
+  const entry = await prisma.spendEntry.findFirst({
+    where: { id, plan: { userId } },
+    include: { programSpend: true },
+  });
+  if (!entry) return null;
+  return {
+    id: entry.id,
+    amountCents: entry.amountCents,
+    type: entry.type,
+    note: entry.note ?? null,
+    date: entry.date,
+    programName: entry.programSpend?.name ?? null,
   };
 }
 

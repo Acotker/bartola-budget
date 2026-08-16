@@ -110,11 +110,16 @@ export default async function HomePage({
       {/* ZONE 3 — Ready to sip */}
       <section className="mt-8">
         <div className="flex items-baseline justify-between">
-          <h2 className="font-heading text-ink text-sm font-semibold uppercase tracking-wider">
-            Ready to sip
-          </h2>
+          <div>
+            <h2 className="font-heading text-ink text-base font-bold">
+              Ready to sip
+            </h2>
+            <p className="text-muted text-xs">
+              Money that&apos;s landed and waiting — sip it or leave it.
+            </p>
+          </div>
           {view.readyTotal > view.ready.length && (
-            <Link href="/programs" className="text-primary text-xs font-bold">
+            <Link href="/programs" className="text-primary shrink-0 text-xs font-bold">
               See all {view.readyTotal}
             </Link>
           )}
@@ -127,49 +132,94 @@ export default async function HomePage({
               ` Your next one lands ${formatShortDate(view.nextOccurrenceDate)}.`}
           </p>
         ) : (
-          <div className="mt-3 space-y-2.5">
+          <div className="mt-3 space-y-3">
             {view.ready.map((r) => (
               <div
                 key={r.id}
-                className="border-line bg-card relative overflow-hidden rounded-2xl border shadow-sm"
+                className="border-line bg-card rounded-2xl border p-4 shadow-sm"
               >
-                {/* Liquid fill level = remaining */}
-                <div
-                  aria-hidden
-                  className="bg-positive/12 border-positive/40 absolute inset-x-0 bottom-0 border-t"
-                  style={{ height: `${Math.round(r.fillRatio * 100)}%` }}
-                />
-                <Link
-                  href={`/log?program=${r.id}`}
-                  className="relative flex items-center justify-between px-4 py-4"
-                >
-                  <div className="min-w-0">
-                    <p className="text-ink truncate text-sm font-bold">{r.name}</p>
-                    <p className="text-muted text-xs">tap to sip</p>
-                  </div>
-                  <span className="tnum text-ink font-heading ml-3 shrink-0 text-lg font-bold">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-ink truncate text-sm font-bold">{r.name}</p>
+                  <span className="tnum text-ink font-heading shrink-0 text-xl font-bold">
                     {formatCents(r.balanceCents)}
                   </span>
-                </Link>
-                <Link
-                  href={`/programs/${r.id}`}
-                  className="text-muted absolute right-2 top-2 z-10 text-[11px] font-bold"
-                >
-                  details ›
-                </Link>
+                </div>
+                {/* Liquid level — how much is left in the bucket */}
+                <div className="bg-surface mt-2 h-2 overflow-hidden rounded-full">
+                  <div
+                    className="bg-positive h-full rounded-full"
+                    style={{ width: `${Math.max(4, Math.round(r.fillRatio * 100))}%` }}
+                  />
+                </div>
+                <p className="text-muted mt-1.5 text-xs">still to sip</p>
+                <div className="mt-3 flex gap-2">
+                  <Link
+                    href={`/log?program=${r.id}`}
+                    className="bg-primary flex flex-1 items-center justify-center rounded-full py-2.5 text-xs font-bold text-white active:scale-[0.98]"
+                  >
+                    Sip it
+                  </Link>
+                  <Link
+                    href={`/programs/${r.id}`}
+                    className="bg-surface text-ink border-line flex items-center justify-center rounded-full border px-4 py-2.5 text-xs font-bold"
+                  >
+                    Details
+                  </Link>
+                </div>
               </div>
             ))}
           </div>
         )}
       </section>
 
+      {/* SPENT TODAY — editable, between Ready and Coming up */}
+      {!deficit && (
+        <section className="mt-8">
+          <div className="flex items-baseline justify-between">
+            <h2 className="font-heading text-ink text-base font-bold">
+              Spent today
+            </h2>
+            {view.spentToday.length > 0 && (
+              <span className="tnum text-ink/70 text-sm font-bold">
+                {formatCents(view.spentTodayTotalCents)}
+              </span>
+            )}
+          </div>
+          {view.spentToday.length === 0 ? (
+            <p className="text-muted mt-3 text-sm">Nothing sipped yet today.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {view.spentToday.map((s) => (
+                <li key={s.id}>
+                  <Link
+                    href={`/spend/${s.id}`}
+                    className="bg-card border-line flex items-center justify-between rounded-xl border px-4 py-3 shadow-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-ink truncate text-sm font-bold">
+                        {s.note ?? s.label}
+                      </p>
+                      {s.note && (
+                        <p className="text-muted truncate text-xs">{s.label}</p>
+                      )}
+                    </div>
+                    <span className="tnum text-ink ml-3 flex shrink-0 items-center gap-1 text-sm font-bold">
+                      {formatCents(s.amountCents)}
+                      <span className="text-muted text-xs">›</span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       {/* ZONE 4 — Coming up */}
       {view.comingUp.length > 0 && (
         <section className="mt-8">
           <div className="flex items-baseline justify-between">
-            <h2 className="font-heading text-ink text-sm font-semibold uppercase tracking-wider">
-              Coming up
-            </h2>
+            <h2 className="font-heading text-ink text-base font-bold">Coming up</h2>
             <Link href="/programs" className="text-primary text-xs font-bold">
               See all
             </Link>
@@ -195,13 +245,11 @@ export default async function HomePage({
         </section>
       )}
 
-      {/* Secondary actions (behind the primary) */}
-      <nav className="text-muted mt-8 flex items-center justify-center gap-4 text-xs font-bold">
-        <Link href="/programs">Program Spends</Link>
-        <span className="text-line">·</span>
-        <Link href="/history">Activity</Link>
-        <span className="text-line">·</span>
-        <Link href="/settings">Plan settings</Link>
+      {/* Navigation — given real weight */}
+      <nav className="mt-8 grid grid-cols-3 gap-3">
+        <NavTile href="/programs" icon="📊" label="Program Spends" />
+        <NavTile href="/history" icon="🧾" label="Activity" />
+        <NavTile href="/settings" icon="⚙️" label="Plan settings" />
       </nav>
 
       {/* ZONE 2 — primary action (thumb-reachable) */}
@@ -225,5 +273,27 @@ function Stat({ label, value }: { label: string; value: string }) {
         {label}
       </p>
     </div>
+  );
+}
+
+function NavTile({
+  href,
+  icon,
+  label,
+}: {
+  href: string;
+  icon: string;
+  label: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="bg-card border-line flex flex-col items-center gap-1.5 rounded-2xl border px-2 py-3.5 text-center shadow-sm active:scale-[0.98]"
+    >
+      <span className="text-lg leading-none">{icon}</span>
+      <span className="text-ink text-[11px] font-bold leading-tight">
+        {label}
+      </span>
+    </Link>
   );
 }

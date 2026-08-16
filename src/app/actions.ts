@@ -43,6 +43,48 @@ export async function logSpendAction(formData: FormData): Promise<void> {
   redirect(`/?sipped=${amountCents}&kind=${type}`);
 }
 
+/** Correct a logged spend (explicit user correction — history is otherwise never rewritten). */
+export async function editSpendAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+
+  const id = String(formData.get("entryId") ?? "");
+  const entry = await prisma.spendEntry.findFirst({
+    where: { id, plan: { userId } },
+  });
+  if (!entry) redirect("/");
+
+  const rawAmount = Number(formData.get("amount"));
+  if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+    redirect(`/spend/${id}?error=amount`);
+  }
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  await prisma.spendEntry.update({
+    where: { id },
+    data: { amountCents: Math.round(rawAmount * 100), note },
+  });
+
+  revalidatePath("/");
+  redirect("/");
+}
+
+export async function deleteSpendAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+
+  const id = String(formData.get("entryId") ?? "");
+  const entry = await prisma.spendEntry.findFirst({
+    where: { id, plan: { userId } },
+  });
+  if (!entry) redirect("/");
+
+  await prisma.spendEntry.delete({ where: { id } });
+
+  revalidatePath("/");
+  redirect("/");
+}
+
 /** Create the user's plan during onboarding (Epic 1). */
 export async function createPlanAction(formData: FormData): Promise<void> {
   const userId = await getSessionUserId();
