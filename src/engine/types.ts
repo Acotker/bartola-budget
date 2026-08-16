@@ -39,6 +39,7 @@ export interface EngineSpendEntry {
   programSpendId?: string;
   /** Which occurrence this program spend belongs to (ISO date of the occurrence). */
   occurrenceRef?: ISODate;
+  note?: string;
 }
 
 export interface EngineInflow {
