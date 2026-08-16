@@ -2,7 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getProgramDetail } from "@/lib/data";
 import { getSessionUserId } from "@/lib/auth";
-import { editProgramAction, cancelProgramAction } from "@/app/actions";
+import { cancelProgramAction } from "@/app/actions";
+import { addDays } from "@/engine";
+import { EditProgramForm } from "@/components/EditProgramForm";
 import { formatCents, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -46,32 +48,12 @@ export default async function ProgramDetailPage({
         />
       </div>
 
-      <form action={editProgramAction} className="mt-8 flex flex-col gap-3">
-        <input type="hidden" name="programId" value={program.id} />
-        <h2 className="text-ink/50 font-heading text-xs font-semibold uppercase tracking-wider">
+      <section className="mt-8">
+        <h2 className="text-ink/50 font-heading mb-3 text-xs font-semibold uppercase tracking-wider">
           Edit
         </h2>
-        <input
-          name="name"
-          defaultValue={program.name}
-          className="bg-card text-ink rounded-xl px-4 py-3 text-sm font-bold shadow-sm outline-none"
-        />
-        <label className="text-ink/50 text-xs font-bold uppercase tracking-wider">
-          Amount per time ($)
-        </label>
-        <input
-          name="amount"
-          inputMode="decimal"
-          defaultValue={(program.amountPerOccurrenceCents / 100).toString()}
-          className="bg-card text-ink tnum rounded-xl px-4 py-3 text-lg font-bold shadow-sm outline-none"
-        />
-        <button
-          type="submit"
-          className="bg-primary mt-1 flex h-12 items-center justify-center rounded-full text-sm font-bold text-white shadow active:scale-[0.98]"
-        >
-          Save changes
-        </button>
-      </form>
+        <EditProgramForm program={program} input={detail.input} asOf={asOf} />
+      </section>
 
       {upcoming.length > 0 && (
         <section className="mt-8">
@@ -114,11 +96,23 @@ export default async function ProgramDetailPage({
         </section>
       )}
 
-      <form action={cancelProgramAction} className="mt-10">
+      <form action={cancelProgramAction} className="mt-10 flex flex-col gap-2">
         <input type="hidden" name="programId" value={program.id} />
-        <button className="text-alert flex h-11 w-full items-center justify-center text-sm font-bold">
-          Remove this Program Spend
+        <label className="text-ink/50 text-xs font-bold uppercase tracking-wider">
+          End it from
+        </label>
+        <input
+          type="date"
+          name="fromDate"
+          defaultValue={addDays(asOf, 1)}
+          className="bg-card text-ink rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
+        />
+        <button className="text-alert mt-1 flex h-11 w-full items-center justify-center text-sm font-bold">
+          End this Program Spend
         </button>
+        <p className="text-ink/40 text-center text-xs">
+          Occurrences before this date — and anything logged — are kept.
+        </p>
       </form>
     </main>
   );

@@ -5,7 +5,7 @@ export type ISODate = string;
 
 export type RecurrenceFreq = "daily" | "weekly" | "biweekly" | "monthly";
 
-export type ProgramStatus = "active" | "completed" | "cancelled";
+export type ProgramStatus = "active" | "completed" | "cancelled" | "superseded";
 
 export interface EnginePlan {
   poolCents: number;

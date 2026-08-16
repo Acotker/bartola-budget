@@ -47,8 +47,9 @@ model ProgramSpend {
   endDate                  String?
   targetDate               String?
   addedOn                  String?
-  status                   String       @default("active") // active | completed | cancelled
+  status                   String       @default("active") // active | superseded | cancelled | completed
   cancelledOn              String?
+  groupId                  String? // links effective-dated versions of the same Program Spend
   createdAt                DateTime     @default(now())
   plan                     Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
   spends                   SpendEntry[]

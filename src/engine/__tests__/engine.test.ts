@@ -276,3 +276,76 @@ describe("Recurrence options (Phase 1)", () => {
     expect(occ).not.toContain("2027-07-01");
   });
 });
+
+describe("Effective-dated editing via linked records (Phase 2)", () => {
+  const plan: EnginePlan = {
+    poolCents: 6_000_000,
+    startDate: "2026-09-01",
+    endDate: "2027-08-31",
+  };
+
+  // Rent is edited from $1,500 to $1,600 effective 2027-01-01: the old record is
+  // truncated to end 2027-01-01, a linked successor starts 2027-01-01.
+  const rentOld: EngineProgramSpend = {
+    id: "rent-v1",
+    name: "Rent",
+    isRecurring: true,
+    amountPerOccurrenceCents: 150_000,
+    recurrence: { freq: "monthly", anchorDay: 1 },
+    endDate: "2027-01-01", // truncated at the edit boundary
+    status: "superseded",
+  };
+  const rentNew: EngineProgramSpend = {
+    id: "rent-v2",
+    name: "Rent",
+    isRecurring: true,
+    amountPerOccurrenceCents: 160_000,
+    recurrence: { freq: "monthly", anchorDay: 1 },
+    startDate: "2027-01-01",
+    addedOn: "2026-12-31", // effective 2027-01-01
+  };
+
+  it("keeps past occurrences at the old amount and future at the new amount, with no gap or overlap", () => {
+    const past = occurrencesFor(rentOld, plan);
+    const future = occurrencesFor(rentNew, plan);
+
+    expect(past).toEqual([
+      "2026-09-01",
+      "2026-10-01",
+      "2026-11-01",
+      "2026-12-01",
+    ]); // 4 months at $1,500
+    expect(future[0]).toBe("2027-01-01");
+    expect(future).toHaveLength(8); // Jan..Aug at $1,600
+    // Combined coverage equals a single unbroken rent (12 months, no dup).
+    expect(past.length + future.length).toBe(12);
+    expect(new Set([...past, ...future]).size).toBe(12);
+  });
+
+  it("reserves the correct blended total across the two records", () => {
+    const reserved =
+      occurrencesFor(rentOld, plan).length * 150_000 +
+      occurrencesFor(rentNew, plan).length * 160_000;
+    expect(reserved).toBe(4 * 150_000 + 8 * 160_000); // $6,000 + $12,800
+  });
+
+  it("the engine treats a 'superseded' record as active history (not dropped like 'cancelled')", () => {
+    // A superseded record still contributes its (past) occurrences.
+    expect(occurrencesFor(rentOld, plan).length).toBe(4);
+  });
+
+  it("ending a Program Spend from a date keeps earlier occurrences and drops the rest", () => {
+    const rent: EngineProgramSpend = {
+      id: "rent",
+      name: "Rent",
+      isRecurring: true,
+      amountPerOccurrenceCents: 150_000,
+      recurrence: { freq: "monthly", anchorDay: 1 },
+      status: "cancelled",
+      cancelledOn: "2027-01-01", // ended from Jan 1
+    };
+    const snap = snapshotAt({ plan, programs: [rent], spends: [] }, "2026-09-11");
+    // Only Oct 1, Nov 1, Dec 1 remain reserved from Sep 11 forward (Jan+ dropped).
+    expect(snap.remainingCommittedCents).toBe(3 * 150_000);
+  });
+});

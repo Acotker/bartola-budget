@@ -100,7 +100,7 @@ export async function loadActivePlan(userId: string): Promise<LoadedPlan | null>
     planId: plan.id,
     input,
     programs: input.programs
-      .filter((p) => p.status !== "cancelled")
+      .filter((p) => p.status === "active")
       .map((p) => ({ id: p.id, name: p.name })),
   };
 }
@@ -157,31 +157,61 @@ export interface ProgramCard {
 export async function getProgramsView(
   userId: string,
 ): Promise<{ cards: ProgramCard[]; asOf: string } | null> {
-  const loaded = await loadActivePlan(userId);
-  if (!loaded) return null;
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
 
-  const state = computePlanState(loaded.input, APP_ASOF);
+  const input = planToEngineInput(plan);
+  const state = computePlanState(input, APP_ASOF);
   const bucketByProgram = new Map(
     state.buckets.map((b) => [b.programSpendId, b]),
   );
+  const engineById = new Map(input.programs.map((ep) => [ep.id, ep]));
+  const statusById = new Map(plan.programs.map((p) => [p.id, p.status]));
 
-  const cards: ProgramCard[] = loaded.input.programs
-    .filter((p) => p.status !== "cancelled")
-    .map((p) => {
-      const occs = occurrencesFor(p, loaded.input.plan);
-      const reservedTotalCents = occs.length * p.amountPerOccurrenceCents;
-      const spentCents = loaded.input.spends
-        .filter((s) => s.type === "program" && s.programSpendId === p.id)
-        .reduce((sum, s) => sum + s.amountCents, 0);
-      return {
-        id: p.id,
-        name: p.name,
-        reservedTotalCents,
-        spentCents,
-        balanceCents: bucketByProgram.get(p.id)?.balanceCents ?? 0,
-        nextOccurrence: occs.find((d) => d > APP_ASOF) ?? null,
-      };
-    });
+  // Group linked effective-dated versions (same groupId) under one card.
+  const groups = new Map<string, string[]>();
+  for (const p of plan.programs) {
+    if (p.status === "cancelled") continue;
+    const key = p.groupId ?? p.id;
+    const arr = groups.get(key) ?? [];
+    arr.push(p.id);
+    groups.set(key, arr);
+  }
+
+  const cards: ProgramCard[] = [...groups.values()].map((ids) => {
+    const activeId =
+      ids.find((i) => statusById.get(i) === "active") ?? ids[ids.length - 1];
+    let reservedTotalCents = 0;
+    let balanceCents = 0;
+    let nextOccurrence: string | null = null;
+    for (const i of ids) {
+      const ep = engineById.get(i);
+      if (!ep) continue;
+      const occs = occurrencesFor(ep, input.plan);
+      reservedTotalCents += occs.length * ep.amountPerOccurrenceCents;
+      balanceCents += bucketByProgram.get(i)?.balanceCents ?? 0;
+      const nxt = occs.find((d) => d > APP_ASOF);
+      if (nxt && (nextOccurrence === null || nxt < nextOccurrence)) {
+        nextOccurrence = nxt;
+      }
+    }
+    const spentCents = input.spends
+      .filter(
+        (s) =>
+          s.type === "program" &&
+          s.programSpendId != null &&
+          ids.includes(s.programSpendId),
+      )
+      .reduce((sum, s) => sum + s.amountCents, 0);
+    return {
+      id: activeId,
+      name: engineById.get(activeId)?.name ?? "Program Spend",
+      reservedTotalCents,
+      spentCents,
+      balanceCents,
+      nextOccurrence,
+    };
+  });
 
   return { cards, asOf: APP_ASOF };
 }
@@ -272,6 +302,7 @@ export async function getSettingsView(
 export interface ProgramDetail {
   planId: string;
   program: EngineProgramSpend;
+  input: EngineInput;
   balanceCents: number;
   reservedTotalCents: number;
   spentCents: number;
@@ -306,6 +337,7 @@ export async function getProgramDetail(
   return {
     planId: plan.id,
     program,
+    input,
     balanceCents: bucket?.balanceCents ?? 0,
     reservedTotalCents: occurrences.length * program.amountPerOccurrenceCents,
     spentCents: spends.reduce((sum, s) => sum + s.amountCents, 0),
