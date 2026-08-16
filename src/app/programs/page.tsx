@@ -38,7 +38,9 @@ export default async function ProgramsPage() {
           return (
             <li key={c.id} className="bg-card rounded-2xl p-4 shadow-sm">
               <div className="flex items-center justify-between">
-                <p className="text-ink font-bold">{c.name}</p>
+                <Link href={`/programs/${c.id}`} className="text-ink font-bold">
+                  {c.name}
+                </Link>
                 {c.nextOccurrence && (
                   <span className="text-ink/40 text-xs">
                     next {formatShortDate(c.nextOccurrence)}

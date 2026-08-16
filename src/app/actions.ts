@@ -128,3 +128,97 @@ export async function cancelProgramAction(formData: FormData): Promise<void> {
   revalidatePath("/programs");
   redirect("/programs");
 }
+
+const isISODate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+
+/** Edit the plan's pool amount and/or dates (Epic 2). Triggers recalc on read. */
+export async function updatePlanAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+
+  const planId = String(formData.get("planId") ?? "");
+  const plan = await prisma.plan.findFirst({ where: { id: planId, userId } });
+  if (!plan) redirect("/settings");
+
+  const rawPool = Number(formData.get("pool"));
+  const startDate = String(formData.get("startDate") ?? "");
+  const endDate = String(formData.get("endDate") ?? "");
+  if (
+    !Number.isFinite(rawPool) ||
+    rawPool <= 0 ||
+    !isISODate(startDate) ||
+    !isISODate(endDate) ||
+    endDate <= startDate
+  ) {
+    redirect("/settings?error=invalid");
+  }
+
+  await prisma.plan.update({
+    where: { id: planId },
+    data: { poolAmountCents: Math.round(rawPool * 100), startDate, endDate },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/settings");
+  redirect("/settings");
+}
+
+/** Log additional income/loan/gift that increases the pool (Epic 2). */
+export async function addInflowAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+
+  const planId = String(formData.get("planId") ?? "");
+  const plan = await prisma.plan.findFirst({ where: { id: planId, userId } });
+  if (!plan) redirect("/settings");
+
+  const rawAmount = Number(formData.get("amount"));
+  if (!Number.isFinite(rawAmount) || rawAmount <= 0) redirect("/settings?error=amount");
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  await prisma.planAdjustment.create({
+    data: {
+      planId,
+      type: "income_add",
+      amountCents: Math.round(rawAmount * 100),
+      date: APP_ASOF,
+      note,
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/settings");
+  redirect("/settings");
+}
+
+/** Edit a Program Spend's name/amount (Epic 3). Amount changes recalc from today. */
+export async function editProgramAction(formData: FormData): Promise<void> {
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+
+  const id = String(formData.get("programId") ?? "");
+  const prog = await prisma.programSpend.findFirst({
+    where: { id, plan: { userId } },
+  });
+  if (!prog) redirect("/programs");
+
+  const name = String(formData.get("name") ?? "").trim() || prog.name;
+  const rawAmount = Number(formData.get("amount"));
+  if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+    redirect(`/programs/${id}?error=amount`);
+  }
+
+  await prisma.programSpend.update({
+    where: { id },
+    data: {
+      name,
+      amountPerOccurrenceCents: Math.round(rawAmount * 100),
+      // An edit takes effect from today onward.
+      addedOn: APP_ASOF,
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/programs");
+  redirect(`/programs/${id}`);
+}

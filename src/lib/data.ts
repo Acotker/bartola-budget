@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import {
   computePlanState,
@@ -18,21 +19,18 @@ import {
  */
 export const APP_ASOF = "2026-09-10";
 
-interface LoadedPlan {
-  planId: string;
-  input: EngineInput;
-  programs: { id: string; name: string }[];
-}
+type PlanWithRelations = Prisma.PlanGetPayload<{
+  include: { programs: true; spends: true; adjustments: true };
+}>;
 
-/** Load a specific user's active plan. Always scoped by userId (data isolation). */
-export async function loadActivePlan(userId: string): Promise<LoadedPlan | null> {
-  const plan = await prisma.plan.findFirst({
-    where: { userId },
-    include: { programs: true, spends: true, adjustments: true },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!plan) return null;
+const planInclude = {
+  programs: true,
+  spends: true,
+  adjustments: true,
+} as const;
 
+/** Pure mapping from a persisted plan to the engine's input shape. */
+export function planToEngineInput(plan: PlanWithRelations): EngineInput {
   const programs: EngineProgramSpend[] = plan.programs.map((p) => ({
     id: p.id,
     name: p.name,
@@ -64,7 +62,7 @@ export async function loadActivePlan(userId: string): Promise<LoadedPlan | null>
     .filter((a) => a.type === "income_add")
     .map((a) => ({ date: a.date, amountCents: a.amountCents }));
 
-  const input: EngineInput = {
+  return {
     plan: {
       poolCents: plan.poolAmountCents,
       startDate: plan.startDate,
@@ -74,11 +72,30 @@ export async function loadActivePlan(userId: string): Promise<LoadedPlan | null>
     spends,
     inflows,
   };
+}
 
+async function findActivePlan(userId: string): Promise<PlanWithRelations | null> {
+  return prisma.plan.findFirst({
+    where: { userId },
+    include: planInclude,
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+interface LoadedPlan {
+  planId: string;
+  input: EngineInput;
+  programs: { id: string; name: string }[];
+}
+
+export async function loadActivePlan(userId: string): Promise<LoadedPlan | null> {
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
+  const input = planToEngineInput(plan);
   return {
     planId: plan.id,
     input,
-    programs: programs
+    programs: input.programs
       .filter((p) => p.status !== "cancelled")
       .map((p) => ({ id: p.id, name: p.name })),
   };
@@ -196,4 +213,114 @@ export async function getHistory(
     }));
 
   return { entries };
+}
+
+export interface SettingsView {
+  planId: string;
+  poolCents: number;
+  startDate: string;
+  endDate: string;
+  reservedCents: number;
+  unallocatedCents: number;
+  daysRemaining: number;
+  dailyCents: number;
+  isDeficit: boolean;
+  income: { date: string; amountCents: number; note: string | null }[];
+}
+
+export async function getSettingsView(
+  userId: string,
+): Promise<SettingsView | null> {
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
+  const input = planToEngineInput(plan);
+  const state = computePlanState(input, APP_ASOF);
+
+  const reservedCents = input.programs
+    .filter((p) => p.status !== "cancelled")
+    .reduce(
+      (sum, p) =>
+        sum + occurrencesFor(p, input.plan).length * p.amountPerOccurrenceCents,
+      0,
+    );
+  const totalInflows = (input.inflows ?? []).reduce(
+    (s, i) => s + i.amountCents,
+    0,
+  );
+
+  return {
+    planId: plan.id,
+    poolCents: plan.poolAmountCents,
+    startDate: plan.startDate,
+    endDate: plan.endDate,
+    reservedCents,
+    unallocatedCents: plan.poolAmountCents + totalInflows - reservedCents,
+    daysRemaining: daysInclusive(APP_ASOF, input.plan.endDate),
+    dailyCents: state.baselineCents,
+    isDeficit: state.isDeficit,
+    income: plan.adjustments
+      .filter((a) => a.type === "income_add")
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .map((a) => ({ date: a.date, amountCents: a.amountCents, note: a.note })),
+  };
+}
+
+export interface ProgramDetail {
+  planId: string;
+  program: EngineProgramSpend;
+  balanceCents: number;
+  reservedTotalCents: number;
+  spentCents: number;
+  occurrences: string[];
+  spends: { id: string; date: string; amountCents: number; note: string | null }[];
+  asOf: string;
+}
+
+export async function getProgramDetail(
+  userId: string,
+  programId: string,
+): Promise<ProgramDetail | null> {
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
+  const input = planToEngineInput(plan);
+  const program = input.programs.find((p) => p.id === programId);
+  if (!program) return null;
+
+  const state = computePlanState(input, APP_ASOF);
+  const bucket = state.buckets.find((b) => b.programSpendId === programId);
+  const occurrences = occurrencesFor(program, input.plan);
+  const spends = input.spends
+    .filter((s) => s.type === "program" && s.programSpendId === programId)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .map((s) => ({
+      id: s.id,
+      date: s.date,
+      amountCents: s.amountCents,
+      note: s.note ?? null,
+    }));
+
+  return {
+    planId: plan.id,
+    program,
+    balanceCents: bucket?.balanceCents ?? 0,
+    reservedTotalCents: occurrences.length * program.amountPerOccurrenceCents,
+    spentCents: spends.reduce((sum, s) => sum + s.amountCents, 0),
+    occurrences,
+    spends,
+    asOf: APP_ASOF,
+  };
+}
+
+/** Recompute every plan's current state — the shape a daily cron would run. */
+export async function runDailyRollover(): Promise<{
+  processed: number;
+  deficits: number;
+}> {
+  const plans = await prisma.plan.findMany({ include: planInclude });
+  let deficits = 0;
+  for (const plan of plans) {
+    const state = computePlanState(planToEngineInput(plan), APP_ASOF);
+    if (state.isDeficit) deficits += 1;
+  }
+  return { processed: plans.length, deficits };
 }

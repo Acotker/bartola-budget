@@ -103,6 +103,13 @@ export default async function HomePage() {
         </Link>
       </nav>
 
+      <Link
+        href="/settings"
+        className="text-ink/50 mt-3 flex h-11 items-center justify-center text-sm font-bold"
+      >
+        Plan settings
+      </Link>
+
       <div className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md px-6 pb-6">
         <Link
           href="/log"
