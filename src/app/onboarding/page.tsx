@@ -59,7 +59,7 @@ export default async function OnboardingPage() {
           type="submit"
           className="bg-primary mt-4 flex h-14 items-center justify-center rounded-full text-base font-bold text-white shadow-lg active:scale-[0.98]"
         >
-          See my daily number
+          See my daily sip
         </button>
       </form>
     </main>

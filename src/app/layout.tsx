@@ -15,8 +15,8 @@ const nunitoSans = Nunito_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Bartola Budget",
-  description: "Your one number for the day: Safe-to-Spend.",
+  title: "Sip",
+  description: "Sip, don't gulp. Make your money last, a little every day.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

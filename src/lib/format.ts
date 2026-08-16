@@ -30,3 +30,7 @@ export function formatLongDate(iso: string): string {
 export function formatShortDate(iso: string): string {
   return DateTime.fromISO(iso, { zone: ZONE }).toFormat("LLL d");
 }
+
+export function formatDateYear(iso: string): string {
+  return DateTime.fromISO(iso, { zone: ZONE }).toFormat("LLL d, yyyy");
+}
