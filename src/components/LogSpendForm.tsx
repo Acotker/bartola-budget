@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { computePlanState, type EngineInput } from "@/engine";
+import {
+  computePlanState,
+  snapshotAt,
+  addDays,
+  type EngineInput,
+} from "@/engine";
 import { logSpendAction } from "@/app/actions";
 import { formatCents } from "@/lib/format";
 
@@ -56,6 +61,17 @@ export function LogSpendForm({ planId, input, asOf, programs }: Props) {
   const preview = computePlanState(previewInput, asOf);
   const s2sChanged = preview.s2sBalanceCents !== current.s2sBalanceCents;
 
+  // Overspend: an S2S spend larger than the Safe-to-Spend on hand. The engine
+  // absorbs the overage (balance floors at 0) and spreads it across the days
+  // ahead, so tomorrow's daily comes down a little. Surface that instead of a
+  // reassuring $0.00 — otherwise going over looks identical to landing on zero.
+  const overspendCents =
+    type === "s2s" ? cents - current.s2sBalanceCents : 0;
+  const isOverspend = hasAmount && overspendCents > 0;
+  const tomorrowBaselineCents = isOverspend
+    ? snapshotAt(previewInput, addDays(asOf, 1)).baselineCents
+    : current.baselineCents;
+
   // A single, informative consequence line (never punitive).
   let consequence: React.ReactNode;
   if (!hasAmount) {
@@ -69,6 +85,23 @@ export function LogSpendForm({ planId, input, asOf, programs }: Props) {
         Comes out of{" "}
         <span className="font-bold">{activeProgram?.name ?? "a program"}</span>.
         Your daily is untouched.
+      </>
+    );
+  } else if (isOverspend) {
+    consequence = (
+      <>
+        <span className="text-alert font-bold">
+          {formatCents(overspendCents)}
+        </span>{" "}
+        over Safe-to-Spend. Tomorrow&apos;s daily eases{" "}
+        <span className="tnum text-ink font-bold">
+          {formatCents(current.baselineCents)}
+        </span>{" "}
+        <span className="text-muted">→</span>{" "}
+        <span className="tnum text-alert font-bold">
+          {formatCents(tomorrowBaselineCents)}
+        </span>{" "}
+        to catch up.
       </>
     );
   } else {
