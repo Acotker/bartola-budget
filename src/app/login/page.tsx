@@ -19,10 +19,10 @@ export default async function LoginPage({
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-6 py-12">
       <h1 className="font-heading text-ink text-3xl font-extrabold">
-        Bartola Budget
+        Sip
       </h1>
       <p className="text-ink/60 mt-1 text-sm">
-        One number a day: what&apos;s safe to spend.
+        Sip, don&apos;t gulp. Make your money last, a little every day.
       </p>
 
       {error && (
@@ -88,7 +88,7 @@ export default async function LoginPage({
       </form>
 
       <p className="text-ink/40 mt-8 text-center text-xs">
-        Try the demo: <span className="font-bold">maria@demo.bartola</span> /
+        Try the demo: <span className="font-bold">demo1@bartola.app</span> /
         demo1234
       </p>
     </main>

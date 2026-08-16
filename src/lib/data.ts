@@ -112,27 +112,73 @@ export interface SpentTodayEntry {
   note: string | null;
 }
 
+export interface ReadyCard {
+  id: string;
+  name: string;
+  balanceCents: number;
+  /** 0..1 — remaining / allocated-to-date, for the liquid fill level. */
+  fillRatio: number;
+}
+
 export interface HomeView {
   planId: string;
   input: EngineInput;
   state: PlanState;
   asOf: string;
   daysRemaining: number;
-  upcoming: { date: string; name: string; amountCents: number }[];
-  spentToday: SpentTodayEntry[];
-  spentTodayTotalCents: number;
+  // Zone 1 — hero
+  safeTodayCents: number; // left to sip today (accumulated available)
+  dailySipCents: number; // the daily Safe-to-Spend amount
+  spentTodayS2sCents: number;
+  carriedOverCents: number;
+  // Zone 3 — ready to sip
+  ready: ReadyCard[];
+  readyTotal: number;
+  // Zone 4 — coming up
+  comingUp: { date: string; name: string; amountCents: number }[];
+  comingUpTotal: number;
+  nextOccurrenceDate: string | null;
+  // for the reporting flow / new-program screen
   programs: { id: string; name: string }[];
 }
 
 export async function getHomeView(userId: string): Promise<HomeView | null> {
-  const loaded = await loadActivePlan(userId);
-  if (!loaded) return null;
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
 
-  const state = computePlanState(loaded.input, APP_ASOF);
-  const daysRemaining = daysInclusive(APP_ASOF, loaded.input.plan.endDate);
-  const upcoming = loaded.input.programs
+  const input = planToEngineInput(plan);
+  const state = computePlanState(input, APP_ASOF);
+  const daysRemaining = daysInclusive(APP_ASOF, input.plan.endDate);
+
+  const spentTodayS2sCents = input.spends
+    .filter((s) => s.date === APP_ASOF && s.type === "s2s")
+    .reduce((sum, s) => sum + s.amountCents, 0);
+  // What carried over from before today = balance + today's spend - today's grant.
+  const carriedOverCents = Math.max(
+    0,
+    state.s2sBalanceCents + spentTodayS2sCents - state.baselineCents,
+  );
+
+  // Zone 3 — Ready to sip: grouped buckets with money sitting ready now.
+  const groups = buildProgramGroups(plan, input, state, APP_ASOF);
+  const readyAll = groups
+    .filter((g) => g.balanceCents > 0)
+    .sort((a, b) => b.balanceCents - a.balanceCents);
+  const ready: ReadyCard[] = readyAll.slice(0, 3).map((g) => ({
+    id: g.id,
+    name: g.name,
+    balanceCents: g.balanceCents,
+    fillRatio:
+      g.allocatedToDateCents > 0
+        ? Math.min(1, Math.max(0, g.balanceCents / g.allocatedToDateCents))
+        : 1,
+  }));
+
+  // Zone 4 — Coming up: nearest upcoming occurrences (active programs only).
+  const comingAll = input.programs
+    .filter((p) => p.status === "active")
     .flatMap((p) =>
-      occurrencesFor(p, loaded.input.plan)
+      occurrencesFor(p, input.plan)
         .filter((d) => d > APP_ASOF)
         .map((d) => ({
           date: d,
@@ -140,36 +186,26 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
           amountCents: p.amountPerOccurrenceCents,
         })),
     )
-    .sort((a, b) => (a.date < b.date ? -1 : 1))
-    .slice(0, 5);
-
-  const nameById = new Map(loaded.input.programs.map((p) => [p.id, p.name]));
-  const spentToday: SpentTodayEntry[] = loaded.input.spends
-    .filter((s) => s.date === APP_ASOF)
-    .map((s) => ({
-      id: s.id,
-      label:
-        s.type === "program"
-          ? nameById.get(s.programSpendId ?? "") ?? "Program Spend"
-          : "Safe-to-Spend",
-      amountCents: s.amountCents,
-      note: s.note ?? null,
-    }));
-  const spentTodayTotalCents = spentToday.reduce(
-    (sum, s) => sum + s.amountCents,
-    0,
-  );
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
 
   return {
-    planId: loaded.planId,
-    input: loaded.input,
+    planId: plan.id,
+    input,
     state,
     asOf: APP_ASOF,
     daysRemaining,
-    upcoming,
-    spentToday,
-    spentTodayTotalCents,
-    programs: loaded.programs,
+    safeTodayCents: state.s2sBalanceCents,
+    dailySipCents: state.baselineCents,
+    spentTodayS2sCents,
+    carriedOverCents,
+    ready,
+    readyTotal: readyAll.length,
+    comingUp: comingAll.slice(0, 3),
+    comingUpTotal: comingAll.length,
+    nextOccurrenceDate: comingAll[0]?.date ?? null,
+    programs: input.programs
+      .filter((p) => p.status === "active")
+      .map((p) => ({ id: p.id, name: p.name })),
   };
 }
 
@@ -182,21 +218,30 @@ export interface ProgramCard {
   nextOccurrence: string | null;
 }
 
-export async function getProgramsView(
-  userId: string,
-): Promise<{ cards: ProgramCard[]; asOf: string } | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
+export interface ProgramGroup {
+  id: string; // active member id (for links/detail)
+  name: string;
+  reservedTotalCents: number;
+  spentCents: number;
+  balanceCents: number;
+  /** Amount allocated by occurrences on/before asOf — the fill denominator. */
+  allocatedToDateCents: number;
+  nextOccurrence: string | null;
+}
 
-  const input = planToEngineInput(plan);
-  const state = computePlanState(input, APP_ASOF);
+/** Group linked effective-dated versions (same groupId) into one accumulating bucket. */
+function buildProgramGroups(
+  plan: PlanWithRelations,
+  input: EngineInput,
+  state: PlanState,
+  asOf: string,
+): ProgramGroup[] {
   const bucketByProgram = new Map(
     state.buckets.map((b) => [b.programSpendId, b]),
   );
   const engineById = new Map(input.programs.map((ep) => [ep.id, ep]));
   const statusById = new Map(plan.programs.map((p) => [p.id, p.status]));
 
-  // Group linked effective-dated versions (same groupId) under one card.
   const groups = new Map<string, string[]>();
   for (const p of plan.programs) {
     if (p.status === "cancelled") continue;
@@ -206,10 +251,11 @@ export async function getProgramsView(
     groups.set(key, arr);
   }
 
-  const cards: ProgramCard[] = [...groups.values()].map((ids) => {
+  return [...groups.values()].map((ids) => {
     const activeId =
       ids.find((i) => statusById.get(i) === "active") ?? ids[ids.length - 1];
     let reservedTotalCents = 0;
+    let allocatedToDateCents = 0;
     let balanceCents = 0;
     let nextOccurrence: string | null = null;
     for (const i of ids) {
@@ -217,8 +263,10 @@ export async function getProgramsView(
       if (!ep) continue;
       const occs = occurrencesFor(ep, input.plan);
       reservedTotalCents += occs.length * ep.amountPerOccurrenceCents;
+      allocatedToDateCents +=
+        occs.filter((d) => d <= asOf).length * ep.amountPerOccurrenceCents;
       balanceCents += bucketByProgram.get(i)?.balanceCents ?? 0;
-      const nxt = occs.find((d) => d > APP_ASOF);
+      const nxt = occs.find((d) => d > asOf);
       if (nxt && (nextOccurrence === null || nxt < nextOccurrence)) {
         nextOccurrence = nxt;
       }
@@ -237,9 +285,38 @@ export async function getProgramsView(
       reservedTotalCents,
       spentCents,
       balanceCents,
+      allocatedToDateCents,
       nextOccurrence,
     };
   });
+}
+
+function byNextOccurrence(a: ProgramGroup, b: ProgramGroup): number {
+  if (a.nextOccurrence === b.nextOccurrence) return 0;
+  if (a.nextOccurrence === null) return 1;
+  if (b.nextOccurrence === null) return -1;
+  return a.nextOccurrence < b.nextOccurrence ? -1 : 1;
+}
+
+export async function getProgramsView(
+  userId: string,
+): Promise<{ cards: ProgramCard[]; asOf: string } | null> {
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
+
+  const input = planToEngineInput(plan);
+  const state = computePlanState(input, APP_ASOF);
+  const groups = buildProgramGroups(plan, input, state, APP_ASOF).sort(
+    byNextOccurrence,
+  );
+  const cards: ProgramCard[] = groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    reservedTotalCents: g.reservedTotalCents,
+    spentCents: g.spentCents,
+    balanceCents: g.balanceCents,
+    nextOccurrence: g.nextOccurrence,
+  }));
 
   return { cards, asOf: APP_ASOF };
 }

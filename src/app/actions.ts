@@ -40,7 +40,7 @@ export async function logSpendAction(formData: FormData): Promise<void> {
   });
 
   revalidatePath("/");
-  redirect("/");
+  redirect(`/?sipped=${amountCents}&kind=${type}`);
 }
 
 /** Create the user's plan during onboarding (Epic 1). */
@@ -72,7 +72,7 @@ export async function createPlanAction(formData: FormData): Promise<void> {
     },
   });
 
-  redirect("/");
+  redirect("/?welcome=1");
 }
 
 /** Create a Program Spend (Epic 3). addedOn = today so the recalc takes effect tomorrow. */

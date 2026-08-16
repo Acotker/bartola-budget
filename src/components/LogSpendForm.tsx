@@ -10,12 +10,27 @@ interface Props {
   input: EngineInput;
   asOf: string;
   programs: { id: string; name: string }[];
+  /** When set (arriving from a "Ready to sip" card), pre-target that Program Spend. */
+  initialProgramId?: string;
 }
 
-export function LogSpendForm({ planId, input, asOf, programs }: Props) {
+export function LogSpendForm({
+  planId,
+  input,
+  asOf,
+  programs,
+  initialProgramId,
+}: Props) {
+  const preselected = initialProgramId
+    ? programs.find((p) => p.id === initialProgramId)?.id
+    : undefined;
   const [amount, setAmount] = useState("");
-  const [type, setType] = useState<"s2s" | "program">("s2s");
-  const [programSpendId, setProgramSpendId] = useState(programs[0]?.id ?? "");
+  const [type, setType] = useState<"s2s" | "program">(
+    preselected ? "program" : "s2s",
+  );
+  const [programSpendId, setProgramSpendId] = useState(
+    preselected ?? programs[0]?.id ?? "",
+  );
   const [note, setNote] = useState("");
 
   // Keypad entry: build the amount string digit by digit.
@@ -208,7 +223,7 @@ export function LogSpendForm({ planId, input, asOf, programs }: Props) {
         disabled={!hasAmount || (type === "program" && programs.length === 0)}
         className="bg-primary font-heading mt-4 flex h-14 items-center justify-center rounded-full text-base font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:opacity-40"
       >
-        Save spend
+        Sip it
       </button>
     </form>
   );
