@@ -92,6 +92,21 @@ export default async function HomePage() {
         </ul>
       </section>
 
+      <nav className="mt-6 grid grid-cols-2 gap-3">
+        <Link
+          href="/programs"
+          className="bg-card text-ink rounded-xl px-4 py-3 text-center text-sm font-bold shadow-sm"
+        >
+          Budgets
+        </Link>
+        <Link
+          href="/history"
+          className="bg-card text-ink rounded-xl px-4 py-3 text-center text-sm font-bold shadow-sm"
+        >
+          Activity
+        </Link>
+      </nav>
+
       <div className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md px-6 pb-6">
         <Link
           href="/log"

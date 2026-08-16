@@ -123,3 +123,76 @@ export async function getHomeView(): Promise<HomeView | null> {
     programs: loaded.programs,
   };
 }
+
+export interface ProgramCard {
+  id: string;
+  name: string;
+  reservedTotalCents: number;
+  spentCents: number;
+  balanceCents: number;
+  nextOccurrence: string | null;
+}
+
+export async function getProgramsView(): Promise<{
+  cards: ProgramCard[];
+  asOf: string;
+} | null> {
+  const loaded = await loadActivePlan();
+  if (!loaded) return null;
+
+  const state = computePlanState(loaded.input, APP_ASOF);
+  const bucketByProgram = new Map(
+    state.buckets.map((b) => [b.programSpendId, b]),
+  );
+
+  const cards: ProgramCard[] = loaded.input.programs
+    .filter((p) => p.status !== "cancelled")
+    .map((p) => {
+      const occs = occurrencesFor(p, loaded.input.plan);
+      const reservedTotalCents = occs.length * p.amountPerOccurrenceCents;
+      const spentCents = loaded.input.spends
+        .filter((s) => s.type === "program" && s.programSpendId === p.id)
+        .reduce((sum, s) => sum + s.amountCents, 0);
+      return {
+        id: p.id,
+        name: p.name,
+        reservedTotalCents,
+        spentCents,
+        balanceCents: bucketByProgram.get(p.id)?.balanceCents ?? 0,
+        nextOccurrence: occs.find((d) => d > APP_ASOF) ?? null,
+      };
+    });
+
+  return { cards, asOf: APP_ASOF };
+}
+
+export interface HistoryEntry {
+  id: string;
+  date: string;
+  amountCents: number;
+  type: string;
+  label: string;
+  note: string | null;
+}
+
+export async function getHistory(): Promise<{ entries: HistoryEntry[] } | null> {
+  const loaded = await loadActivePlan();
+  if (!loaded) return null;
+
+  const nameById = new Map(loaded.input.programs.map((p) => [p.id, p.name]));
+  const entries: HistoryEntry[] = [...loaded.input.spends]
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .map((s) => ({
+      id: s.id,
+      date: s.date,
+      amountCents: s.amountCents,
+      type: s.type,
+      label:
+        s.type === "program"
+          ? nameById.get(s.programSpendId ?? "") ?? "Budget"
+          : "Safe-to-Spend",
+      note: s.note ?? null,
+    }));
+
+  return { entries };
+}
