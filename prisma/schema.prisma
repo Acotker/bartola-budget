@@ -1,0 +1,81 @@
+// Bartola Budget v1 data model (plan §4). All money is integer cents; all
+// dates are ISO 'YYYY-MM-DD' strings interpreted in America/New_York by the
+// engine. SQLite for local/hackathon; swap the provider to postgresql for
+// Vercel deployment.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  plans        Plan[]
+}
+
+model Plan {
+  id              String           @id @default(cuid())
+  userId          String
+  poolAmountCents Int
+  startDate       String
+  endDate         String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  programs        ProgramSpend[]
+  spends          SpendEntry[]
+  adjustments     PlanAdjustment[]
+}
+
+model ProgramSpend {
+  id                       String       @id @default(cuid())
+  planId                   String
+  name                     String
+  isRecurring              Boolean
+  freq                     String? // weekly | biweekly | monthly
+  anchorDay                Int?
+  amountPerOccurrenceCents Int
+  startDate                String?
+  endDate                  String?
+  targetDate               String?
+  addedOn                  String?
+  status                   String       @default("active") // active | completed | cancelled
+  cancelledOn              String?
+  createdAt                DateTime     @default(now())
+  plan                     Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  spends                   SpendEntry[]
+}
+
+model SpendEntry {
+  id             String        @id @default(cuid())
+  planId         String
+  date           String
+  amountCents    Int
+  type           String // s2s | program
+  programSpendId String?
+  occurrenceRef  String?
+  note           String?
+  createdAt      DateTime      @default(now())
+  plan           Plan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  programSpend   ProgramSpend? @relation(fields: [programSpendId], references: [id], onDelete: SetNull)
+}
+
+model PlanAdjustment {
+  id          String   @id @default(cuid())
+  planId      String
+  type        String // income_add | pool_edit | date_edit
+  amountCents Int
+  oldValue    String?
+  newValue    String?
+  date        String
+  note        String?
+  createdAt   DateTime @default(now())
+  plan        Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+}

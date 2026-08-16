@@ -1,10 +1,30 @@
 import Link from "next/link";
-import { getDemoView } from "@/lib/demo";
+import { getHomeView } from "@/lib/data";
 import { S2SNumber } from "@/components/S2SNumber";
 import { formatCents, formatLongDate, formatShortDate } from "@/lib/format";
 
-export default function HomePage() {
-  const { state, asOf, daysRemaining, upcoming } = getDemoView();
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const view = await getHomeView();
+
+  if (!view) {
+    return (
+      <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center px-6 text-center">
+        <p className="font-heading text-ink text-2xl font-semibold">
+          Let&apos;s set up your plan
+        </p>
+        <Link
+          href="/onboarding"
+          className="bg-primary mt-6 rounded-full px-6 py-3 font-bold text-white"
+        >
+          Get started
+        </Link>
+      </main>
+    );
+  }
+
+  const { state, asOf, daysRemaining, upcoming } = view;
   const deficit = state.isDeficit;
 
   return (
@@ -21,13 +41,13 @@ export default function HomePage() {
           <p className="text-ink/70 mt-2 text-sm leading-6">
             Your committed spending is larger than the money left for the days
             remaining. Nothing is blocked — here&apos;s how to fix it: trim or
-            remove a Program Spend, extend your end date, or add income.
+            remove a budget, extend your end date, or add income.
           </p>
           <Link
             href="/programs"
             className="bg-alert mt-4 inline-flex rounded-full px-4 py-2 text-sm font-bold text-white"
           >
-            Review Program Spends
+            Review budgets
           </Link>
         </div>
       ) : (
