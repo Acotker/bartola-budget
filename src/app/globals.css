@@ -1,21 +1,23 @@
 @import "tailwindcss";
 
 /*
- * Bartola Budget design tokens (brief §8). Restrained fintech palette; color
- * used for meaning, not decoration. NOTE: --color-primary is a PLACEHOLDER
- * purple pending brand confirmation (the brand sheet's value collides with the
- * alert red).
+ * Bartola Budget design tokens — "paper" palette. Warm, calm fintech: cream
+ * surfaces, a single confident green for money that's healthy/interactive, a
+ * copper accent, and a brick red reserved for the rare deficit state. Color is
+ * used for meaning, not decoration.
  */
 @theme inline {
-  --color-ink: #003945;
-  --color-primary: #5b21ee;
-  --color-accent: #00a6b5;
-  --color-positive: #00c9b7;
-  --color-alert: #ff2654;
-  --color-surface: #ecf3f4;
-  --color-card: #ffffff;
+  --color-ink: #1f1d1b;
+  --color-primary: #2f6b4f;
+  --color-accent: #b0703c;
+  --color-positive: #2f6b4f;
+  --color-alert: #b4442f;
+  --color-surface: #f5f1ea;
+  --color-card: #fffdf9;
+  --color-muted: #6c6760;
+  --color-line: #e2dbce;
 
-  --font-heading: var(--font-montserrat);
+  --font-heading: var(--font-space-grotesk);
   --font-sans: var(--font-nunito);
 }
 
