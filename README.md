@@ -41,19 +41,15 @@ The demo clock is hardcoded (`APP_ASOF` in `src/lib/data.ts`) because the demo p
 
 ## Deploying to Vercel (Postgres)
 
-SQLite is for local/hackathon use. For a real deploy, switch to Postgres (serverless filesystems are read-only):
+The app is configured for **Postgres** in production (serverless filesystems are read-only, so SQLite can't be used there). `vercel.json` runs `prisma db push` during the build to create the tables, so no manual migration step is needed.
 
-1. Provision Postgres (Neon via the Vercel integration is one click; it injects `DATABASE_URL`).
-2. In `prisma/schema.prisma`, change the datasource provider:
-   ```prisma
-   datasource db {
-     provider = "postgresql"
-     url      = env("DATABASE_URL")
-   }
-   ```
-3. `npx prisma migrate deploy` (or `migrate dev` to create the first Postgres migration).
-4. Set `AUTH_SECRET` in Vercel env vars.
-5. Deploy. `postinstall` runs `prisma generate` automatically.
+1. Import this repo into Vercel.
+2. Add **Neon Postgres** storage in the Vercel project (Storage tab) — it injects `DATABASE_URL` automatically.
+3. Add an `AUTH_SECRET` environment variable (any long random string).
+4. Deploy. The build runs `prisma generate && prisma db push && next build`.
+5. Open the app, sign up, and onboard.
+
+**Local development** now also uses Postgres — point `DATABASE_URL` at your Neon database (or a Neon dev branch), then `npm run db:seed && npm run dev`.
 
 ## Status
 
