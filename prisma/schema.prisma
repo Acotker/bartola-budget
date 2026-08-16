@@ -39,8 +39,9 @@ model ProgramSpend {
   planId                   String
   name                     String
   isRecurring              Boolean
-  freq                     String? // weekly | biweekly | monthly
-  anchorDay                Int?
+  freq                     String? // daily | weekly | biweekly | monthly
+  anchorDay                Int? // day-of-month (monthly)
+  anchorWeekday            Int? // 1=Mon..7=Sun (weekly/biweekly)
   amountPerOccurrenceCents Int
   startDate                String?
   endDate                  String?

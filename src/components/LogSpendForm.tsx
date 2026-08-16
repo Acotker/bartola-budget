@@ -78,13 +78,13 @@ export function LogSpendForm({ planId, input, asOf, programs }: Props) {
             type === "program" ? "bg-card text-ink shadow" : "text-ink/50"
           }`}
         >
-          A budget
+          A Program Spend
         </button>
       </div>
       <p className="text-ink/50 mt-2 text-center text-xs">
         {type === "s2s"
           ? "Comes out of your everyday allowance."
-          : "Comes out of a set-aside budget — your daily is untouched."}
+          : "Comes out of a set-aside Program Spend — your daily is untouched."}
       </p>
 
       {type === "program" && (

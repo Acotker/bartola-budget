@@ -117,7 +117,7 @@ export default async function ProgramDetailPage({
       <form action={cancelProgramAction} className="mt-10">
         <input type="hidden" name="programId" value={program.id} />
         <button className="text-alert flex h-11 w-full items-center justify-center text-sm font-bold">
-          Remove this budget
+          Remove this Program Spend
         </button>
       </form>
     </main>

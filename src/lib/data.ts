@@ -38,7 +38,11 @@ export function planToEngineInput(plan: PlanWithRelations): EngineInput {
     amountPerOccurrenceCents: p.amountPerOccurrenceCents,
     recurrence:
       p.isRecurring && p.freq
-        ? { freq: p.freq as RecurrenceFreq, anchorDay: p.anchorDay ?? undefined }
+        ? {
+            freq: p.freq as RecurrenceFreq,
+            anchorDay: p.anchorDay ?? undefined,
+            anchorWeekday: p.anchorWeekday ?? undefined,
+          }
         : undefined,
     startDate: p.startDate ?? undefined,
     endDate: p.endDate ?? undefined,
@@ -207,7 +211,7 @@ export async function getHistory(
       type: s.type,
       label:
         s.type === "program"
-          ? nameById.get(s.programSpendId ?? "") ?? "Budget"
+          ? nameById.get(s.programSpendId ?? "") ?? "Program Spend"
           : "Safe-to-Spend",
       note: s.note ?? null,
     }));
