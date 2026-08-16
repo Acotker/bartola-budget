@@ -105,6 +105,13 @@ export async function loadActivePlan(userId: string): Promise<LoadedPlan | null>
   };
 }
 
+export interface SpentTodayEntry {
+  id: string;
+  label: string;
+  amountCents: number;
+  note: string | null;
+}
+
 export interface HomeView {
   planId: string;
   input: EngineInput;
@@ -112,6 +119,8 @@ export interface HomeView {
   asOf: string;
   daysRemaining: number;
   upcoming: { date: string; name: string; amountCents: number }[];
+  spentToday: SpentTodayEntry[];
+  spentTodayTotalCents: number;
   programs: { id: string; name: string }[];
 }
 
@@ -134,6 +143,23 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     .sort((a, b) => (a.date < b.date ? -1 : 1))
     .slice(0, 5);
 
+  const nameById = new Map(loaded.input.programs.map((p) => [p.id, p.name]));
+  const spentToday: SpentTodayEntry[] = loaded.input.spends
+    .filter((s) => s.date === APP_ASOF)
+    .map((s) => ({
+      id: s.id,
+      label:
+        s.type === "program"
+          ? nameById.get(s.programSpendId ?? "") ?? "Program Spend"
+          : "Safe-to-Spend",
+      amountCents: s.amountCents,
+      note: s.note ?? null,
+    }));
+  const spentTodayTotalCents = spentToday.reduce(
+    (sum, s) => sum + s.amountCents,
+    0,
+  );
+
   return {
     planId: loaded.planId,
     input: loaded.input,
@@ -141,6 +167,8 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     asOf: APP_ASOF,
     daysRemaining,
     upcoming,
+    spentToday,
+    spentTodayTotalCents,
     programs: loaded.programs,
   };
 }

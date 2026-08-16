@@ -4,7 +4,7 @@ import { getHomeView } from "@/lib/data";
 import { getSessionUserId } from "@/lib/auth";
 import { logoutAction } from "@/app/auth-actions";
 import { S2SNumber } from "@/components/S2SNumber";
-import { formatCents, formatLongDate, formatShortDate } from "@/lib/format";
+import { formatCents } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export default async function HomePage() {
   const view = await getHomeView(userId);
   if (!view) redirect("/onboarding");
 
-  const { state, asOf, daysRemaining, upcoming } = view;
+  const { state, spentToday, spentTodayTotalCents } = view;
   const deficit = state.isDeficit;
 
   return (
@@ -61,32 +61,47 @@ export default async function HomePage() {
         </p>
       )}
 
-      <div className="text-ink/60 mt-8 flex items-center justify-between text-sm">
-        <span>{formatLongDate(asOf)}</span>
-        <span className="tnum">{daysRemaining} days left</span>
-      </div>
-
-      <section className="mt-6">
-        <h2 className="text-ink/50 font-heading text-xs font-semibold uppercase tracking-wider">
-          Coming up
-        </h2>
-        <ul className="mt-3 space-y-2">
-          {upcoming.map((o) => (
-            <li
-              key={`${o.name}-${o.date}`}
-              className="bg-card flex items-center justify-between rounded-xl px-4 py-3 shadow-sm"
-            >
-              <div>
-                <p className="text-ink text-sm font-bold">{o.name}</p>
-                <p className="text-ink/50 text-xs">{formatShortDate(o.date)}</p>
-              </div>
-              <span className="tnum text-ink/80 text-sm font-bold">
-                {formatCents(o.amountCents)}
+      {!deficit && (
+        <section className="mt-8">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-ink/50 font-heading text-xs font-semibold uppercase tracking-wider">
+              Spent today
+            </h2>
+            {spentToday.length > 0 && (
+              <span className="tnum text-ink/70 text-sm font-bold">
+                {formatCents(spentTodayTotalCents)}
               </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+            )}
+          </div>
+
+          {spentToday.length === 0 ? (
+            <p className="text-ink/50 mt-3 text-sm">
+              Nothing logged yet today.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {spentToday.map((s) => (
+                <li
+                  key={s.id}
+                  className="bg-card flex items-center justify-between rounded-xl px-4 py-3 shadow-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="text-ink truncate text-sm font-bold">
+                      {s.label}
+                    </p>
+                    {s.note && (
+                      <p className="text-ink/50 truncate text-xs">{s.note}</p>
+                    )}
+                  </div>
+                  <span className="tnum text-ink/80 ml-3 shrink-0 text-sm font-bold">
+                    {formatCents(s.amountCents)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <nav className="mt-6 grid grid-cols-2 gap-3">
         <Link
