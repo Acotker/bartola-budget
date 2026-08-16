@@ -3,9 +3,9 @@
 
 export type ISODate = string;
 
-export type RecurrenceFreq = "weekly" | "biweekly" | "monthly";
+export type RecurrenceFreq = "daily" | "weekly" | "biweekly" | "monthly";
 
-export type ProgramStatus = "active" | "completed" | "cancelled";
+export type ProgramStatus = "active" | "completed" | "cancelled" | "superseded";
 
 export interface EnginePlan {
   poolCents: number;
@@ -18,8 +18,8 @@ export interface EngineProgramSpend {
   name: string;
   isRecurring: boolean;
   amountPerOccurrenceCents: number;
-  /** Recurring only. */
-  recurrence?: { freq: RecurrenceFreq; anchorDay?: number };
+  /** Recurring only. `anchorDay` = day-of-month (monthly); `anchorWeekday` = 1=Mon…7=Sun (weekly/biweekly). */
+  recurrence?: { freq: RecurrenceFreq; anchorDay?: number; anchorWeekday?: number };
   /** Recurring window; defaults to the plan window. */
   startDate?: ISODate;
   endDate?: ISODate;

@@ -37,13 +37,13 @@ export default async function HomePage() {
           <p className="text-ink/70 mt-2 text-sm leading-6">
             Your committed spending is larger than the money left for the days
             remaining. Nothing is blocked — here&apos;s how to fix it: trim or
-            remove a budget, extend your end date, or add income.
+            remove a Program Spend, extend your end date, or add income.
           </p>
           <Link
             href="/programs"
             className="bg-alert mt-4 inline-flex rounded-full px-4 py-2 text-sm font-bold text-white"
           >
-            Review budgets
+            Review Program Spends
           </Link>
         </div>
       ) : (
@@ -93,7 +93,7 @@ export default async function HomePage() {
           href="/programs"
           className="bg-card text-ink rounded-xl px-4 py-3 text-center text-sm font-bold shadow-sm"
         >
-          Budgets
+          Program Spends
         </Link>
         <Link
           href="/history"
