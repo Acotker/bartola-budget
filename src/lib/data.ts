@@ -2,8 +2,10 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import {
   computePlanState,
+  snapshotAt,
   occurrencesFor,
   daysInclusive,
+  addDays,
   type EngineInput,
   type EngineProgramSpend,
   type EngineSpendEntry,
@@ -153,6 +155,16 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
   const state = computePlanState(input, APP_ASOF);
   const daysRemaining = daysInclusive(APP_ASOF, input.plan.endDate);
 
+  // The daily sip that applies going forward. Today's own baseline
+  // (state.baselineCents) is still the pre-recalc rate on an overspend day —
+  // the engine only lowers it from tomorrow. snapshotAt at asOf+1 gives that
+  // go-forward rate, and equals today's rate when nothing has changed, so the
+  // number people see matches what they'll actually sip next.
+  const forwardDailyCents = snapshotAt(
+    input,
+    addDays(APP_ASOF, 1),
+  ).baselineCents;
+
   const spentTodayS2sCents = input.spends
     .filter((s) => s.date === APP_ASOF && s.type === "s2s")
     .reduce((sum, s) => sum + s.amountCents, 0);
@@ -217,7 +229,7 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     asOf: APP_ASOF,
     daysRemaining,
     safeTodayCents: state.s2sBalanceCents,
-    dailySipCents: state.baselineCents,
+    dailySipCents: forwardDailyCents,
     spentTodayS2sCents,
     carriedOverCents,
     ready,
@@ -447,7 +459,7 @@ export async function getSettingsView(
     reservedCents,
     unallocatedCents: plan.poolAmountCents + totalInflows - reservedCents,
     daysRemaining: daysInclusive(APP_ASOF, input.plan.endDate),
-    dailyCents: state.baselineCents,
+    dailyCents: snapshotAt(input, addDays(APP_ASOF, 1)).baselineCents,
     isDeficit: state.isDeficit,
     income: plan.adjustments
       .filter((a) => a.type === "income_add")
