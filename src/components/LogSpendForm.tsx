@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { computePlanState, type EngineInput } from "@/engine";
 import { logSpendAction } from "@/app/actions";
 import { formatCents } from "@/lib/format";
@@ -19,7 +18,27 @@ export function LogSpendForm({ planId, input, asOf, programs }: Props) {
   const [programSpendId, setProgramSpendId] = useState(programs[0]?.id ?? "");
   const [note, setNote] = useState("");
 
+  // Keypad entry: build the amount string digit by digit.
+  const press = (key: string) => {
+    setAmount((prev) => {
+      if (key === "del") return prev.slice(0, -1);
+      if (key === ".") {
+        if (prev.includes(".")) return prev;
+        return prev === "" ? "0." : prev + ".";
+      }
+      // Block a 3rd decimal place.
+      const dot = prev.indexOf(".");
+      if (dot !== -1 && prev.length - dot > 2) return prev;
+      // Avoid a leading run of zeros like "0005".
+      if (prev === "0") return key;
+      return prev + key;
+    });
+  };
+
   const cents = Math.round((parseFloat(amount) || 0) * 100);
+  const hasAmount = cents > 0;
+  const activeProgram = programs.find((p) => p.id === programSpendId);
+
   const current = computePlanState(input, asOf);
   const previewInput: EngineInput = {
     ...input,
@@ -35,108 +54,184 @@ export function LogSpendForm({ planId, input, asOf, programs }: Props) {
     ],
   };
   const preview = computePlanState(previewInput, asOf);
-  const showPreview = cents > 0;
+  const s2sChanged = preview.s2sBalanceCents !== current.s2sBalanceCents;
+
+  // A single, informative consequence line (never punitive).
+  let consequence: React.ReactNode;
+  if (!hasAmount) {
+    consequence =
+      type === "s2s"
+        ? "Comes out of today's allowance."
+        : "Money already set aside — your daily is untouched.";
+  } else if (type === "program" && !s2sChanged) {
+    consequence = (
+      <>
+        Comes out of{" "}
+        <span className="font-bold">{activeProgram?.name ?? "a program"}</span>.
+        Your daily is untouched.
+      </>
+    );
+  } else {
+    consequence = (
+      <>
+        Safe to spend{" "}
+        <span className="tnum text-ink font-bold">
+          {formatCents(current.s2sBalanceCents)}
+        </span>{" "}
+        <span className="text-muted">→</span>{" "}
+        <span
+          className={`tnum font-bold ${
+            preview.isDeficit ? "text-alert" : "text-positive"
+          }`}
+        >
+          {formatCents(preview.s2sBalanceCents)}
+        </span>
+      </>
+    );
+  }
 
   return (
     <form action={logSpendAction} className="flex flex-1 flex-col">
       <input type="hidden" name="planId" value={planId} />
       <input type="hidden" name="type" value={type} />
+      <input type="hidden" name="amount" value={amount} />
       {type === "program" && (
         <input type="hidden" name="programSpendId" value={programSpendId} />
       )}
 
-      <label className="text-ink/50 text-xs font-bold uppercase tracking-wider">
-        Amount
-      </label>
-      <div className="mt-2 flex items-center">
-        <span className="text-ink/40 font-heading text-4xl font-bold">$</span>
-        <input
-          name="amount"
-          inputMode="decimal"
-          autoFocus
-          placeholder="0.00"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-          className="tnum font-heading text-ink placeholder:text-ink/20 w-full bg-transparent text-6xl font-extrabold outline-none"
-        />
+      {/* Amount + live consequence */}
+      <div className="mt-4 text-center">
+        <div className="font-heading text-ink tnum text-6xl font-bold tracking-tight">
+          <span className={hasAmount ? "" : "text-ink/25"}>
+            ${amount === "" ? "0" : amount}
+          </span>
+        </div>
+        <p className="text-muted mt-3 min-h-[38px] px-2 text-sm leading-relaxed">
+          {consequence}
+        </p>
       </div>
 
-      <div className="bg-ink/5 mt-8 grid grid-cols-2 gap-1 rounded-full p-1">
+      {/* Source: Safe-to-Spend vs a program */}
+      <div className="mt-2 grid grid-cols-2 gap-2.5">
         <button
           type="button"
           onClick={() => setType("s2s")}
-          className={`rounded-full py-3 text-sm font-bold transition ${
-            type === "s2s" ? "bg-card text-ink shadow" : "text-ink/50"
+          className={`rounded-2xl border p-3 text-left transition ${
+            type === "s2s" ? "border-primary bg-primary/8" : "border-line bg-card"
           }`}
         >
-          Safe-to-Spend
+          <span className="font-heading text-ink block text-sm font-semibold">
+            Safe to spend
+          </span>
+          <span className="text-muted mt-0.5 block text-[11.5px] leading-snug">
+            Comes out of today&apos;s allowance
+          </span>
         </button>
         <button
           type="button"
           onClick={() => setType("program")}
-          className={`rounded-full py-3 text-sm font-bold transition ${
-            type === "program" ? "bg-card text-ink shadow" : "text-ink/50"
+          className={`rounded-2xl border p-3 text-left transition ${
+            type === "program"
+              ? "border-primary bg-primary/8"
+              : "border-line bg-card"
           }`}
         >
-          A Program Spend
+          <span className="font-heading text-ink block text-sm font-semibold">
+            A program
+          </span>
+          <span className="text-muted mt-0.5 block text-[11.5px] leading-snug">
+            Money already set aside
+          </span>
         </button>
       </div>
-      <p className="text-ink/50 mt-2 text-center text-xs">
-        {type === "s2s"
-          ? "Comes out of your everyday allowance."
-          : "Comes out of a set-aside Program Spend — your daily is untouched."}
-      </p>
 
+      {/* Which program (chips) */}
       {type === "program" && (
-        <select
-          value={programSpendId}
-          onChange={(e) => setProgramSpendId(e.target.value)}
-          className="bg-card text-ink mt-4 rounded-xl px-4 py-3 text-sm font-bold shadow-sm"
-        >
-          {programs.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <div className="mt-3">
+          {programs.length === 0 ? (
+            <p className="text-muted text-center text-xs">
+              No programs yet — add one from Programs first.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {programs.map((p) => {
+                const selected = p.id === programSpendId;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setProgramSpendId(p.id)}
+                    className={`rounded-full border px-3.5 py-2 text-sm font-bold transition ${
+                      selected
+                        ? "border-primary bg-primary text-white"
+                        : "border-line bg-card text-ink"
+                    }`}
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
+      {/* Optional note */}
       <input
         name="note"
         value={note}
         onChange={(e) => setNote(e.target.value)}
         placeholder="Add a note (optional)"
-        className="bg-card text-ink placeholder:text-ink/30 mt-4 rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
+        className="bg-card text-ink placeholder:text-muted/60 border-line mt-3 rounded-xl border px-4 py-3 text-sm outline-none"
       />
 
-      {showPreview && (
-        <div className="border-ink/10 mt-6 rounded-2xl border border-dashed p-4 text-center">
-          <p className="text-ink/50 text-xs">Your Safe-to-Spend after this</p>
-          <p className="tnum text-ink font-heading mt-1 text-2xl font-bold">
-            {formatCents(current.s2sBalanceCents)}{" "}
-            <span className="text-ink/30">-&gt;</span>{" "}
-            <span className={preview.isDeficit ? "text-alert" : "text-positive"}>
-              {formatCents(preview.s2sBalanceCents)}
-            </span>
-          </p>
-        </div>
-      )}
+      <div className="flex-1" />
 
-      <div className="mt-auto flex flex-col gap-3 pt-8">
-        <button
-          type="submit"
-          disabled={!showPreview}
-          className="bg-primary flex h-14 items-center justify-center rounded-full text-base font-bold text-white shadow-lg transition active:scale-[0.98] disabled:opacity-40"
-        >
-          Save spend
-        </button>
-        <Link
-          href="/"
-          className="text-ink/50 flex h-10 items-center justify-center text-sm font-bold"
-        >
-          Cancel
-        </Link>
+      {/* Keypad */}
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((n) => (
+          <Key key={n} onPress={() => press(n)}>
+            {n}
+          </Key>
+        ))}
+        <Key muted onPress={() => press(".")}>
+          .
+        </Key>
+        <Key onPress={() => press("0")}>0</Key>
+        <Key muted onPress={() => press("del")}>
+          ⌫
+        </Key>
       </div>
+
+      <button
+        type="submit"
+        disabled={!hasAmount || (type === "program" && programs.length === 0)}
+        className="bg-primary font-heading mt-4 flex h-14 items-center justify-center rounded-full text-base font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:opacity-40"
+      >
+        Save spend
+      </button>
     </form>
+  );
+}
+
+function Key({
+  children,
+  onPress,
+  muted,
+}: {
+  children: React.ReactNode;
+  onPress: () => void;
+  muted?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPress}
+      className={`font-heading border-line h-[52px] rounded-2xl border text-xl font-semibold transition active:scale-[0.97] ${
+        muted ? "bg-surface text-ink/70" : "bg-card text-ink"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
