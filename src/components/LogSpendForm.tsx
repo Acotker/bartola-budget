@@ -108,15 +108,15 @@ export function LogSpendForm({
         <span className="text-alert font-bold">
           {formatCents(overspendCents)}
         </span>{" "}
-        over Safe-to-Spend. Tomorrow&apos;s daily eases{" "}
-        <span className="tnum text-ink font-bold">
-          {formatCents(current.baselineCents)}
-        </span>{" "}
-        <span className="text-muted">→</span>{" "}
+        over. Your new Safe-to-Spend is{" "}
         <span className="tnum text-alert font-bold">
           {formatCents(tomorrowBaselineCents)}
-        </span>{" "}
-        to catch up.
+        </span>
+        /day for the days ahead — down from{" "}
+        <span className="tnum text-ink font-bold">
+          {formatCents(current.baselineCents)}
+        </span>
+        .
       </>
     );
   } else {
