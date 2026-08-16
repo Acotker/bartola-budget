@@ -9,7 +9,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Runtime uses the pooled connection; schema changes (db push) use Neon's
+  // direct connection — pooled/pgbouncer can't run DDL reliably.
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 model User {
@@ -39,15 +42,17 @@ model ProgramSpend {
   planId                   String
   name                     String
   isRecurring              Boolean
-  freq                     String? // weekly | biweekly | monthly
-  anchorDay                Int?
+  freq                     String? // daily | weekly | biweekly | monthly
+  anchorDay                Int? // day-of-month (monthly)
+  anchorWeekday            Int? // 1=Mon..7=Sun (weekly/biweekly)
   amountPerOccurrenceCents Int
   startDate                String?
   endDate                  String?
   targetDate               String?
   addedOn                  String?
-  status                   String       @default("active") // active | completed | cancelled
+  status                   String       @default("active") // active | superseded | cancelled | completed
   cancelledOn              String?
+  groupId                  String? // links effective-dated versions of the same Program Spend
   createdAt                DateTime     @default(now())
   plan                     Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
   spends                   SpendEntry[]

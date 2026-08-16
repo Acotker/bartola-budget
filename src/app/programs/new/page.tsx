@@ -13,7 +13,7 @@ export default async function NewProgramPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-8 pt-10">
-      <h1 className="font-heading text-ink text-2xl font-semibold">New budget</h1>
+      <h1 className="font-heading text-ink text-2xl font-semibold">New Program Spend</h1>
       <p className="text-ink/50 mt-1 text-sm">
         Set money aside. You&apos;ll see exactly what it costs your daily number.
       </p>

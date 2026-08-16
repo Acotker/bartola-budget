@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import Decimal from "decimal.js";
 import { occurrencesFor } from "../occurrences";
 import { computePlanState, snapshotAt } from "../compute";
-import type { EngineInput, EngineSpendEntry } from "../types";
+import type {
+  EngineInput,
+  EnginePlan,
+  EngineProgramSpend,
+  EngineSpendEntry,
+} from "../types";
 import {
   MARIA_PLAN,
   MARIA_PROGRAMS,
@@ -198,5 +203,149 @@ describe("Program overspend (bucket goes negative) triggers a recalc", () => {
     ];
     const state = computePlanState(mariaInput(MARIA_PROGRAMS, spends), "2026-09-05");
     expect(state.baselineCents).toBeLessThan(8_384);
+  });
+});
+
+describe("Recurrence options (Phase 1)", () => {
+  const rec = (
+    freq: "daily" | "weekly" | "biweekly" | "monthly",
+    extra: { anchorDay?: number; anchorWeekday?: number } = {},
+  ): EngineProgramSpend => ({
+    id: "p",
+    name: "P",
+    isRecurring: true,
+    amountPerOccurrenceCents: 1000,
+    recurrence: { freq, ...extra },
+  });
+
+  it("daily fires every day in the half-open window", () => {
+    const plan: EnginePlan = {
+      poolCents: 100_000,
+      startDate: "2026-09-01",
+      endDate: "2026-09-11",
+    };
+    const occ = occurrencesFor(rec("daily"), plan);
+    expect(occ).toHaveLength(10); // Sep 1..Sep 10 (Sep 11 excluded)
+    expect(occ[0]).toBe("2026-09-01");
+    expect(occ[occ.length - 1]).toBe("2026-09-10");
+  });
+
+  it("weekly anchors to a chosen weekday (Mon), not the window start", () => {
+    const plan: EnginePlan = {
+      poolCents: 100_000,
+      startDate: "2026-09-01", // a Tuesday
+      endDate: "2026-10-01",
+    };
+    const occ = occurrencesFor(rec("weekly", { anchorWeekday: 1 }), plan);
+    expect(occ[0]).toBe("2026-09-07"); // first Monday on/after Sep 1
+    expect(occ).toEqual(["2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28"]);
+  });
+
+  it("biweekly keeps a 14-day phase from the weekday anchor", () => {
+    const plan: EnginePlan = {
+      poolCents: 100_000,
+      startDate: "2026-09-01",
+      endDate: "2026-10-15",
+    };
+    const occ = occurrencesFor(rec("biweekly", { anchorWeekday: 1 }), plan);
+    expect(occ).toEqual(["2026-09-07", "2026-09-21", "2026-10-05"]);
+  });
+
+  it("monthly clamps the 31st to the last day of shorter months", () => {
+    const plan: EnginePlan = {
+      poolCents: 100_000,
+      startDate: "2027-01-01",
+      endDate: "2027-04-01",
+    };
+    const occ = occurrencesFor(rec("monthly", { anchorDay: 31 }), plan);
+    expect(occ).toEqual(["2027-01-31", "2027-02-28", "2027-03-31"]);
+  });
+
+  it("per-program end date truncates reservations (lease ending in June)", () => {
+    const plan: EnginePlan = {
+      poolCents: 100_000,
+      startDate: "2026-09-01",
+      endDate: "2027-08-31",
+    };
+    const lease: EngineProgramSpend = {
+      ...rec("monthly", { anchorDay: 1 }),
+      endDate: "2027-06-30", // lease ends June
+    };
+    const occ = occurrencesFor(lease, plan);
+    expect(occ[occ.length - 1]).toBe("2027-06-01"); // nothing reserved past June
+    expect(occ).not.toContain("2027-07-01");
+  });
+});
+
+describe("Effective-dated editing via linked records (Phase 2)", () => {
+  const plan: EnginePlan = {
+    poolCents: 6_000_000,
+    startDate: "2026-09-01",
+    endDate: "2027-08-31",
+  };
+
+  // Rent is edited from $1,500 to $1,600 effective 2027-01-01: the old record is
+  // truncated to end 2027-01-01, a linked successor starts 2027-01-01.
+  const rentOld: EngineProgramSpend = {
+    id: "rent-v1",
+    name: "Rent",
+    isRecurring: true,
+    amountPerOccurrenceCents: 150_000,
+    recurrence: { freq: "monthly", anchorDay: 1 },
+    endDate: "2027-01-01", // truncated at the edit boundary
+    status: "superseded",
+  };
+  const rentNew: EngineProgramSpend = {
+    id: "rent-v2",
+    name: "Rent",
+    isRecurring: true,
+    amountPerOccurrenceCents: 160_000,
+    recurrence: { freq: "monthly", anchorDay: 1 },
+    startDate: "2027-01-01",
+    addedOn: "2026-12-31", // effective 2027-01-01
+  };
+
+  it("keeps past occurrences at the old amount and future at the new amount, with no gap or overlap", () => {
+    const past = occurrencesFor(rentOld, plan);
+    const future = occurrencesFor(rentNew, plan);
+
+    expect(past).toEqual([
+      "2026-09-01",
+      "2026-10-01",
+      "2026-11-01",
+      "2026-12-01",
+    ]); // 4 months at $1,500
+    expect(future[0]).toBe("2027-01-01");
+    expect(future).toHaveLength(8); // Jan..Aug at $1,600
+    // Combined coverage equals a single unbroken rent (12 months, no dup).
+    expect(past.length + future.length).toBe(12);
+    expect(new Set([...past, ...future]).size).toBe(12);
+  });
+
+  it("reserves the correct blended total across the two records", () => {
+    const reserved =
+      occurrencesFor(rentOld, plan).length * 150_000 +
+      occurrencesFor(rentNew, plan).length * 160_000;
+    expect(reserved).toBe(4 * 150_000 + 8 * 160_000); // $6,000 + $12,800
+  });
+
+  it("the engine treats a 'superseded' record as active history (not dropped like 'cancelled')", () => {
+    // A superseded record still contributes its (past) occurrences.
+    expect(occurrencesFor(rentOld, plan).length).toBe(4);
+  });
+
+  it("ending a Program Spend from a date keeps earlier occurrences and drops the rest", () => {
+    const rent: EngineProgramSpend = {
+      id: "rent",
+      name: "Rent",
+      isRecurring: true,
+      amountPerOccurrenceCents: 150_000,
+      recurrence: { freq: "monthly", anchorDay: 1 },
+      status: "cancelled",
+      cancelledOn: "2027-01-01", // ended from Jan 1
+    };
+    const snap = snapshotAt({ plan, programs: [rent], spends: [] }, "2026-09-11");
+    // Only Oct 1, Nov 1, Dec 1 remain reserved from Sep 11 forward (Jan+ dropped).
+    expect(snap.remainingCommittedCents).toBe(3 * 150_000);
   });
 });

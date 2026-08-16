@@ -39,14 +39,41 @@ export function occurrencesFor(
     return monthlyOccurrences(start, end, rule.anchorDay ?? dt(start).day);
   }
 
+  if (rule.freq === "daily") {
+    return steppedOccurrences(start, end, 1, dt(start));
+  }
+
   const step = rule.freq === "biweekly" ? 14 : 7;
+  // Weekly/biweekly anchor to a weekday when given; otherwise to the window
+  // start (back-compat with pre-weekday programs).
+  const first =
+    rule.anchorWeekday != null
+      ? firstWeekdayOnOrAfter(start, rule.anchorWeekday)
+      : dt(start);
+  return steppedOccurrences(start, end, step, first);
+}
+
+function steppedOccurrences(
+  startIso: ISODate,
+  endExclusiveIso: ISODate,
+  step: number,
+  first: DateTime,
+): ISODate[] {
   const out: ISODate[] = [];
-  let cur = dt(start);
-  while (toISO(cur) < end) {
+  let cur = first;
+  while (toISO(cur) < startIso) cur = cur.plus({ days: step });
+  while (toISO(cur) < endExclusiveIso) {
     out.push(toISO(cur));
     cur = cur.plus({ days: step });
   }
   return out;
+}
+
+/** Luxon weekday: 1=Mon … 7=Sun. Returns the first such weekday on/after `startIso`. */
+function firstWeekdayOnOrAfter(startIso: ISODate, anchorWeekday: number): DateTime {
+  const cur = dt(startIso);
+  const diff = ((anchorWeekday - cur.weekday) % 7 + 7) % 7;
+  return cur.plus({ days: diff });
 }
 
 function monthlyOccurrences(

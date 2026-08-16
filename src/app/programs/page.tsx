@@ -16,7 +16,7 @@ export default async function ProgramsPage() {
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-10 pt-10">
       <div className="flex items-center justify-between">
-        <h1 className="font-heading text-ink text-2xl font-semibold">Budgets</h1>
+        <h1 className="font-heading text-ink text-2xl font-semibold">Program Spends</h1>
         <Link href="/" className="text-ink/50 text-sm font-bold">
           Done
         </Link>
@@ -29,7 +29,7 @@ export default async function ProgramsPage() {
         href="/programs/new"
         className="border-primary text-primary mt-5 flex h-11 items-center justify-center rounded-full border text-sm font-bold"
       >
-        + Add a budget
+        + Add a Program Spend
       </Link>
 
       <ul className="mt-4 space-y-3">

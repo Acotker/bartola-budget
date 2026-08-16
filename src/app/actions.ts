@@ -5,6 +5,12 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { APP_ASOF } from "@/lib/data";
 import { getSessionUserId } from "@/lib/auth";
+import { addDays } from "@/engine";
+
+function isoOrNull(v: FormDataEntryValue | null): string | null {
+  const s = String(v ?? "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
 
 /**
  * Log a real spend. A Server Action is a public POST endpoint, so it verifies
@@ -78,28 +84,45 @@ export async function createProgramAction(formData: FormData): Promise<void> {
   const plan = await prisma.plan.findFirst({ where: { id: planId, userId } });
   if (!plan) redirect("/programs");
 
-  const name = String(formData.get("name") ?? "").trim() || "Budget";
+  const name = String(formData.get("name") ?? "").trim() || "Program Spend";
   const rawAmount = Number(formData.get("amount"));
-  const kind = String(formData.get("kind") ?? "recurring");
+  const kind = String(formData.get("kind") ?? "monthly");
   if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
     redirect("/programs/new?error=amount");
   }
   const amountPerOccurrenceCents = Math.round(rawAmount * 100);
+  const startDate = isoOrNull(formData.get("startDate"));
+  const endDate = isoOrNull(formData.get("endDate"));
 
   if (kind === "onetime") {
-    const targetDate = String(formData.get("targetDate") ?? "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
-      redirect("/programs/new?error=date");
-    }
+    const targetDate = isoOrNull(formData.get("targetDate"));
+    if (!targetDate) redirect("/programs/new?error=date");
     await prisma.programSpend.create({
       data: { planId, name, isRecurring: false, amountPerOccurrenceCents, targetDate, addedOn: APP_ASOF },
     });
   } else {
-    const freq = String(formData.get("freq") ?? "monthly");
+    const freq = ["daily", "weekly", "biweekly", "monthly"].includes(kind)
+      ? kind
+      : "monthly";
     const anchorDay =
       freq === "monthly" ? Number(formData.get("anchorDay")) || 1 : null;
+    const anchorWeekday =
+      freq === "weekly" || freq === "biweekly"
+        ? Number(formData.get("anchorWeekday")) || 1
+        : null;
     await prisma.programSpend.create({
-      data: { planId, name, isRecurring: true, freq, anchorDay, amountPerOccurrenceCents, addedOn: APP_ASOF },
+      data: {
+        planId,
+        name,
+        isRecurring: true,
+        freq,
+        anchorDay,
+        anchorWeekday,
+        amountPerOccurrenceCents,
+        startDate,
+        endDate,
+        addedOn: APP_ASOF,
+      },
     });
   }
 
@@ -119,9 +142,13 @@ export async function cancelProgramAction(formData: FormData): Promise<void> {
   });
   if (!prog) redirect("/programs");
 
+  // End from a chosen date forward (default tomorrow). The engine keeps
+  // occurrences before this date, so history is preserved.
+  const fromDate = isoOrNull(formData.get("fromDate")) ?? addDays(APP_ASOF, 1);
+
   await prisma.programSpend.update({
     where: { id },
-    data: { status: "cancelled", cancelledOn: APP_ASOF },
+    data: { status: "cancelled", cancelledOn: fromDate },
   });
 
   revalidatePath("/");
@@ -207,18 +234,61 @@ export async function editProgramAction(formData: FormData): Promise<void> {
   if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
     redirect(`/programs/${id}?error=amount`);
   }
+  const amountPerOccurrenceCents = Math.round(rawAmount * 100);
+  const boundary = addDays(APP_ASOF, 1); // edits take effect tomorrow
+  const groupId = prog.groupId ?? prog.id;
+
+  if (!prog.isRecurring) {
+    // One-time: editable only while it hasn't happened yet (never rewrite history).
+    if (prog.targetDate && prog.targetDate < boundary) redirect(`/programs/${id}`);
+    const targetDate = isoOrNull(formData.get("targetDate")) ?? prog.targetDate;
+    await prisma.programSpend.update({
+      where: { id },
+      data: { name, amountPerOccurrenceCents, targetDate, addedOn: APP_ASOF },
+    });
+    revalidatePath("/");
+    revalidatePath("/programs");
+    redirect(`/programs/${id}`);
+  }
+
+  // Recurring: effective-dated. Truncate the current record at tomorrow and
+  // create a linked successor carrying the new rule from tomorrow onward. Past
+  // occurrences (and anything logged) stay exactly as they were.
+  const kind = String(formData.get("kind") ?? prog.freq ?? "monthly");
+  const freq = ["daily", "weekly", "biweekly", "monthly"].includes(kind)
+    ? kind
+    : "monthly";
+  const anchorDay =
+    freq === "monthly" ? Number(formData.get("anchorDay")) || prog.anchorDay || 1 : null;
+  const anchorWeekday =
+    freq === "weekly" || freq === "biweekly"
+      ? Number(formData.get("anchorWeekday")) || prog.anchorWeekday || 1
+      : null;
+  const originalEnd = prog.endDate;
+  const submittedEnd = isoOrNull(formData.get("endDate"));
 
   await prisma.programSpend.update({
     where: { id },
+    data: { status: "superseded", endDate: boundary, groupId },
+  });
+  await prisma.programSpend.create({
     data: {
+      planId: prog.planId,
       name,
-      amountPerOccurrenceCents: Math.round(rawAmount * 100),
-      // An edit takes effect from today onward.
+      isRecurring: true,
+      freq,
+      anchorDay,
+      anchorWeekday,
+      amountPerOccurrenceCents,
+      startDate: boundary,
+      endDate: submittedEnd ?? originalEnd,
       addedOn: APP_ASOF,
+      groupId,
+      status: "active",
     },
   });
 
   revalidatePath("/");
   revalidatePath("/programs");
-  redirect(`/programs/${id}`);
+  redirect(`/programs`);
 }
