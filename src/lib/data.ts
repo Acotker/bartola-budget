@@ -11,8 +11,6 @@ import {
   type RecurrenceFreq,
 } from "@/engine";
 
-export const DEMO_EMAIL = "maria@demo.bartola";
-
 /**
  * Demo clock. The seeded plan runs Sep 2026 -> Aug 2027, so we anchor "today"
  * inside the runway. In a production build this becomes the current date in
@@ -26,10 +24,12 @@ interface LoadedPlan {
   programs: { id: string; name: string }[];
 }
 
-export async function loadActivePlan(): Promise<LoadedPlan | null> {
+/** Load a specific user's active plan. Always scoped by userId (data isolation). */
+export async function loadActivePlan(userId: string): Promise<LoadedPlan | null> {
   const plan = await prisma.plan.findFirst({
-    where: { user: { email: DEMO_EMAIL } },
+    where: { userId },
     include: { programs: true, spends: true, adjustments: true },
+    orderBy: { createdAt: "desc" },
   });
   if (!plan) return null;
 
@@ -94,8 +94,8 @@ export interface HomeView {
   programs: { id: string; name: string }[];
 }
 
-export async function getHomeView(): Promise<HomeView | null> {
-  const loaded = await loadActivePlan();
+export async function getHomeView(userId: string): Promise<HomeView | null> {
+  const loaded = await loadActivePlan(userId);
   if (!loaded) return null;
 
   const state = computePlanState(loaded.input, APP_ASOF);
@@ -133,11 +133,10 @@ export interface ProgramCard {
   nextOccurrence: string | null;
 }
 
-export async function getProgramsView(): Promise<{
-  cards: ProgramCard[];
-  asOf: string;
-} | null> {
-  const loaded = await loadActivePlan();
+export async function getProgramsView(
+  userId: string,
+): Promise<{ cards: ProgramCard[]; asOf: string } | null> {
+  const loaded = await loadActivePlan(userId);
   if (!loaded) return null;
 
   const state = computePlanState(loaded.input, APP_ASOF);
@@ -175,8 +174,10 @@ export interface HistoryEntry {
   note: string | null;
 }
 
-export async function getHistory(): Promise<{ entries: HistoryEntry[] } | null> {
-  const loaded = await loadActivePlan();
+export async function getHistory(
+  userId: string,
+): Promise<{ entries: HistoryEntry[] } | null> {
+  const loaded = await loadActivePlan(userId);
   if (!loaded) return null;
 
   const nameById = new Map(loaded.input.programs.map((p) => [p.id, p.name]));

@@ -1,37 +1,33 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getHomeView } from "@/lib/data";
+import { getSessionUserId } from "@/lib/auth";
+import { logoutAction } from "@/app/auth-actions";
 import { S2SNumber } from "@/components/S2SNumber";
 import { formatCents, formatLongDate, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const view = await getHomeView();
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
 
-  if (!view) {
-    return (
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col items-center justify-center px-6 text-center">
-        <p className="font-heading text-ink text-2xl font-semibold">
-          Let&apos;s set up your plan
-        </p>
-        <Link
-          href="/onboarding"
-          className="bg-primary mt-6 rounded-full px-6 py-3 font-bold text-white"
-        >
-          Get started
-        </Link>
-      </main>
-    );
-  }
+  const view = await getHomeView(userId);
+  if (!view) redirect("/onboarding");
 
   const { state, asOf, daysRemaining, upcoming } = view;
   const deficit = state.isDeficit;
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-28 pt-10">
-      <p className="text-ink/60 text-sm font-bold uppercase tracking-wider">
-        {deficit ? "Plan needs attention" : "Safe to spend today"}
-      </p>
+      <div className="flex items-start justify-between">
+        <p className="text-ink/60 text-sm font-bold uppercase tracking-wider">
+          {deficit ? "Plan needs attention" : "Safe to spend today"}
+        </p>
+        <form action={logoutAction}>
+          <button className="text-ink/40 text-xs font-bold">Log out</button>
+        </form>
+      </div>
 
       {deficit ? (
         <div className="border-alert/30 bg-alert/5 mt-4 rounded-2xl border p-5">

@@ -1,12 +1,15 @@
 import { redirect } from "next/navigation";
 import { getHomeView } from "@/lib/data";
+import { getSessionUserId } from "@/lib/auth";
 import { LogSpendForm } from "@/components/LogSpendForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function LogPage() {
-  const view = await getHomeView();
-  if (!view) redirect("/");
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+  const view = await getHomeView(userId);
+  if (!view) redirect("/onboarding");
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-8 pt-10">

@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getHistory } from "@/lib/data";
+import { getSessionUserId } from "@/lib/auth";
 import { formatCents, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function HistoryPage() {
-  const view = await getHistory();
-  if (!view) redirect("/");
+  const userId = await getSessionUserId();
+  if (!userId) redirect("/login");
+  const view = await getHistory(userId);
+  if (!view) redirect("/onboarding");
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-10 pt-10">
