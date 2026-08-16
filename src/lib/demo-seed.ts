@@ -42,6 +42,9 @@ interface InflowCfg {
   note: string;
 }
 
+/** One day's worth of discretionary line items, e.g. [{note:"Coffee",amountCents:500}]. */
+type DaySpend = { note: string; amountCents: number }[];
+
 interface Persona {
   email: string;
   poolCents: number;
@@ -50,11 +53,37 @@ interface Persona {
   recurring: RecurringCfg[];
   oneTime: OneTimeCfg[];
   inflows: InflowCfg[];
-  /** Daily Safe-to-Spend history amounts (deterministic pattern). */
-  coffeeCents: number;
-  lunchCents: number;
-  outingCents: number;
+  /**
+   * Past daily Safe-to-Spend history. Either the simple pattern (coffee every
+   * day, lunch every 3rd day, outing weekly) or a full Mon..Sun template
+   * (`weekTemplate`, 7 entries, cycled) for a richer, denser story. Exactly
+   * one of the two shapes is set per persona.
+   */
+  coffeeCents?: number;
+  lunchCents?: number;
+  outingCents?: number;
+  weekTemplate?: DaySpend[];
 }
+
+/** Multiply a Mon..Sun template's amounts by a factor (used to hit a target weekly spend). */
+function scaleWeek(template: DaySpend[], factor: number): DaySpend[] {
+  return template.map((day) =>
+    day.map((item) => ({ ...item, amountCents: Math.round(item.amountCents * factor) })),
+  );
+}
+
+// A believable week: coffee/lunch on weekdays, a Friday dinner, a bigger
+// Saturday, a quiet Sunday. Scaled per persona to land a moderate S2S
+// carryover — realistic daily spending close to (not far under) the daily sip.
+const REALISTIC_WEEK: DaySpend[] = [
+  [{ note: "Coffee", amountCents: 500 }, { note: "Lunch", amountCents: 1400 }], // Mon
+  [{ note: "Coffee", amountCents: 500 }, { note: "Lunch", amountCents: 1400 }], // Tue
+  [{ note: "Coffee", amountCents: 500 }], // Wed
+  [{ note: "Coffee", amountCents: 500 }, { note: "Lunch", amountCents: 1400 }], // Thu
+  [{ note: "Coffee", amountCents: 500 }, { note: "Dinner with friends", amountCents: 2800 }], // Fri
+  [{ note: "Brunch", amountCents: 1800 }, { note: "Weekend outing", amountCents: 4200 }], // Sat
+  [{ note: "Coffee", amountCents: 500 }, { note: "Misc", amountCents: 1200 }], // Sun
+];
 
 const PERSONAS: Persona[] = [
   {
@@ -118,6 +147,114 @@ const PERSONAS: Persona[] = [
     coffeeCents: 550,
     lunchCents: 1_800,
     outingCents: 4_500,
+  },
+
+  // --- Duplicates of the two richest scenarios, for parallel demos/testing
+  // without teammates colliding on the same account. Identical setup to
+  // demo1 / demo3, different login. ---
+  {
+    email: "demo4@bartola.app",
+    poolCents: 9_500_000,
+    startDate: "2026-08-01",
+    endDate: "2028-06-30",
+    recurring: [
+      { name: "Rent", freq: "monthly", anchorDay: 1, amountCents: 160_000, spentRatio: 1 },
+      { name: "Groceries", freq: "weekly", anchorWeekday: 6, amountCents: 16_000, spentRatio: 0.9 },
+      { name: "Phone & utilities", freq: "monthly", anchorDay: 15, amountCents: 9_000, spentRatio: 1 },
+      { name: "Trips fund", freq: "monthly", anchorDay: 1, amountCents: 25_000, spentRatio: 0 },
+    ],
+    oneTime: [
+      { name: "Winter holidays trip", targetDate: "2026-12-22", amountCents: 140_000 },
+      { name: "Summer in Europe", targetDate: "2027-07-10", amountCents: 280_000 },
+      { name: "Spring break", targetDate: "2028-03-15", amountCents: 120_000 },
+    ],
+    inflows: [{ date: "2026-09-01", amountCents: 200_000, note: "TA stipend" }],
+    coffeeCents: 475,
+    lunchCents: 1_400,
+    outingCents: 3_500,
+  },
+  {
+    email: "demo5@bartola.app",
+    poolCents: 13_500_000,
+    startDate: "2026-08-01",
+    endDate: "2028-06-30",
+    recurring: [
+      { name: "Rent", freq: "monthly", anchorDay: 1, amountCents: 220_000, spentRatio: 1 },
+      { name: "Groceries", freq: "weekly", anchorWeekday: 6, amountCents: 20_000, spentRatio: 0.9 },
+      { name: "Subscriptions", freq: "monthly", anchorDay: 10, amountCents: 8_000, spentRatio: 1 },
+      { name: "Trips fund", freq: "monthly", anchorDay: 1, amountCents: 40_000, spentRatio: 0 },
+    ],
+    oneTime: [
+      { name: "December trip home", targetDate: "2026-12-18", amountCents: 250_000 },
+      { name: "Summer in Asia", targetDate: "2027-07-05", amountCents: 400_000 },
+      { name: "Conference", targetDate: "2028-02-20", amountCents: 180_000 },
+    ],
+    inflows: [{ date: "2026-08-25", amountCents: 500_000, note: "Consulting project" }],
+    coffeeCents: 550,
+    lunchCents: 1_800,
+    outingCents: 4_500,
+  },
+
+  // --- The "ultimate demo" three: each built around one flagship moment. ---
+  {
+    // Story: rent posted on the 1st but not yet logged — it shows up in
+    // "Ready to sip" as real, unspent money sitting there, exactly the
+    // behavior the product is proud of. Plus a partially-spent groceries and
+    // trips bucket, and a moderate (not massive) carried-over Safe-to-Spend.
+    email: "demo6@bartola.app",
+    poolCents: 8_000_000,
+    startDate: "2026-08-14",
+    endDate: "2028-06-30",
+    recurring: [
+      { name: "Rent", freq: "monthly", anchorDay: 1, amountCents: 145_000, spentRatio: 0 },
+      { name: "Groceries", freq: "weekly", anchorWeekday: 6, amountCents: 14_000, spentRatio: 0.8 },
+      { name: "Phone & utilities", freq: "monthly", anchorDay: 15, amountCents: 6_000, spentRatio: 1 },
+      { name: "Trips fund", freq: "monthly", anchorDay: 1, amountCents: 20_000, spentRatio: 0.4 },
+    ],
+    oneTime: [
+      { name: "Winter break", targetDate: "2026-12-20", amountCents: 90_000 },
+      { name: "Summer abroad", targetDate: "2027-07-01", amountCents: 220_000 },
+    ],
+    inflows: [{ date: "2026-08-20", amountCents: 150_000, note: "Fellowship top-up" }],
+    weekTemplate: scaleWeek(REALISTIC_WEEK, 1.45),
+  },
+  {
+    // Story: a thin Safe-to-Spend buffer, perfect for demoing a *live*
+    // overspend — type an amount above the balance shown and watch the
+    // consequence line explain the recalculation in real time.
+    email: "demo7@bartola.app",
+    poolCents: 7_200_000,
+    startDate: "2026-08-24",
+    endDate: "2028-05-31",
+    recurring: [
+      { name: "Rent", freq: "monthly", anchorDay: 1, amountCents: 130_000, spentRatio: 1 },
+      { name: "Groceries", freq: "weekly", anchorWeekday: 7, amountCents: 13_000, spentRatio: 0.9 },
+      { name: "Trips fund", freq: "monthly", anchorDay: 1, amountCents: 15_000, spentRatio: 0.6 },
+    ],
+    oneTime: [{ name: "Thanksgiving", targetDate: "2026-11-26", amountCents: 45_000 }],
+    inflows: [{ date: "2026-08-26", amountCents: 60_000, note: "Freelance gig" }],
+    weekTemplate: scaleWeek(REALISTIC_WEEK, 2.15),
+  },
+  {
+    // Story: comfortable headroom, built so adding a big trip live visibly
+    // eats into (or flips) the plan — great for showing the Baseline-delta
+    // preview and, if you go big enough, the friendly deficit state.
+    email: "demo8@bartola.app",
+    poolCents: 10_500_000,
+    startDate: "2026-08-10",
+    endDate: "2028-06-30",
+    recurring: [
+      { name: "Rent", freq: "monthly", anchorDay: 1, amountCents: 170_000, spentRatio: 1 },
+      { name: "Groceries", freq: "weekly", anchorWeekday: 6, amountCents: 17_000, spentRatio: 0.85 },
+      { name: "Subscriptions", freq: "monthly", anchorDay: 10, amountCents: 5_000, spentRatio: 1 },
+      { name: "Trips fund", freq: "monthly", anchorDay: 1, amountCents: 25_000, spentRatio: 0.3 },
+    ],
+    oneTime: [
+      { name: "December trip", targetDate: "2026-12-19", amountCents: 130_000 },
+      { name: "Summer trip", targetDate: "2027-07-08", amountCents: 260_000 },
+    ],
+    inflows: [{ date: "2026-08-16", amountCents: 300_000, note: "Research assistantship" }],
+    weekTemplate: scaleWeek(REALISTIC_WEEK, 2.4),
   },
 ];
 
@@ -224,16 +361,22 @@ export async function seedDemoData(): Promise<SeedSummary> {
       });
     }
 
-    // Past daily Safe-to-Spend history (deterministic pattern).
+    // Past daily Safe-to-Spend history (deterministic).
     let day = p.startDate;
     let i = 0;
     while (day < APP_ASOF) {
-      spends.push({ planId: plan.id, date: day, amountCents: p.coffeeCents, type: "s2s", note: "Coffee" });
-      if (i % 3 === 0) {
-        spends.push({ planId: plan.id, date: day, amountCents: p.lunchCents, type: "s2s", note: "Lunch" });
-      }
-      if (i % 7 === 5) {
-        spends.push({ planId: plan.id, date: day, amountCents: p.outingCents, type: "s2s", note: "Weekend out" });
+      if (p.weekTemplate) {
+        for (const item of p.weekTemplate[i % 7]) {
+          spends.push({ planId: plan.id, date: day, amountCents: item.amountCents, type: "s2s", note: item.note });
+        }
+      } else {
+        spends.push({ planId: plan.id, date: day, amountCents: p.coffeeCents!, type: "s2s", note: "Coffee" });
+        if (i % 3 === 0) {
+          spends.push({ planId: plan.id, date: day, amountCents: p.lunchCents!, type: "s2s", note: "Lunch" });
+        }
+        if (i % 7 === 5) {
+          spends.push({ planId: plan.id, date: day, amountCents: p.outingCents!, type: "s2s", note: "Weekend out" });
+        }
       }
       day = addDays(day, 1);
       i += 1;
