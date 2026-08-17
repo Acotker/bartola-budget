@@ -32,6 +32,13 @@ export default async function ProgramsPage() {
         + Add a Program Spend
       </Link>
 
+      <Link
+        href="/import"
+        className="text-muted mt-2 flex h-10 items-center justify-center text-xs font-bold"
+      >
+        Import from a statement instead
+      </Link>
+
       <ul className="mt-4 space-y-3">
         {view.cards.map((c) => {
           const available = c.balanceCents;

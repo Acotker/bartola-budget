@@ -6,6 +6,11 @@ import { prisma } from "@/lib/db";
 import { APP_ASOF } from "@/lib/data";
 import { getSessionUserId } from "@/lib/auth";
 import { addDays } from "@/engine";
+import {
+  createProgramSpendForPlan,
+  isRecurringKind,
+  type ProgramSpendKind,
+} from "@/lib/program-spends";
 
 function isoOrNull(v: FormDataEntryValue | null): string | null {
   const s = String(v ?? "");
@@ -139,32 +144,25 @@ export async function createProgramAction(formData: FormData): Promise<void> {
   if (kind === "onetime") {
     const targetDate = isoOrNull(formData.get("targetDate"));
     if (!targetDate) redirect("/programs/new?error=date");
-    await prisma.programSpend.create({
-      data: { planId, name, isRecurring: false, amountPerOccurrenceCents, targetDate, addedOn: APP_ASOF },
+    await createProgramSpendForPlan({
+      planId,
+      name,
+      amountPerOccurrenceCents,
+      kind: "onetime",
+      targetDate,
+      addedOn: APP_ASOF,
     });
   } else {
-    const freq = ["daily", "weekly", "biweekly", "monthly"].includes(kind)
-      ? kind
-      : "monthly";
-    const anchorDay =
-      freq === "monthly" ? Number(formData.get("anchorDay")) || 1 : null;
-    const anchorWeekday =
-      freq === "weekly" || freq === "biweekly"
-        ? Number(formData.get("anchorWeekday")) || 1
-        : null;
-    await prisma.programSpend.create({
-      data: {
-        planId,
-        name,
-        isRecurring: true,
-        freq,
-        anchorDay,
-        anchorWeekday,
-        amountPerOccurrenceCents,
-        startDate,
-        endDate,
-        addedOn: APP_ASOF,
-      },
+    await createProgramSpendForPlan({
+      planId,
+      name,
+      amountPerOccurrenceCents,
+      kind: isRecurringKind(kind) ? (kind as ProgramSpendKind) : "monthly",
+      anchorDay: Number(formData.get("anchorDay")) || 1,
+      anchorWeekday: Number(formData.get("anchorWeekday")) || 1,
+      startDate,
+      endDate,
+      addedOn: APP_ASOF,
     });
   }
 

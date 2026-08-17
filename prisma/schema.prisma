@@ -16,11 +16,84 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String         @id @default(cuid())
+  email        String         @unique
   passwordHash String
-  createdAt    DateTime @default(now())
+  createdAt    DateTime       @default(now())
   plans        Plan[]
+  imports      ImportUpload[]
+}
+
+// --- Subscription import ------------------------------------------------
+// Populates Program Spends from a CSV export. Nothing here writes a Program
+// Spend directly; candidates are suggestions the user reviews and confirms.
+// Dates are ISO 'YYYY-MM-DD' strings and money is integer cents, matching the
+// rest of the schema and the engine's invariants.
+
+model ImportUpload {
+  id               String              @id @default(cuid())
+  userId           String
+  planId           String?
+  uploadedAt       DateTime            @default(now())
+  originalFilename String?
+  rowCount         Int                 @default(0)
+  skippedRowCount  Int                 @default(0)
+  status           String              @default("ready") // processing | ready | failed
+  errorMessage     String?
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions     ImportTransaction[]
+  candidates       ImportCandidate[]
+}
+
+/// Parsed outflow rows. Retained after review on purpose: a future
+/// reconciliation pass can diff an old upload against a new one without asking
+/// the user to re-supply history they've already given us.
+model ImportTransaction {
+  id                    String           @id @default(cuid())
+  uploadId              String
+  transactionDate       String
+  rawDescription        String
+  normalizedDescription String
+  amountCents           Int
+  sourceAccountLabel    String?
+  candidateId           String?
+  upload                ImportUpload     @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  candidate             ImportCandidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+
+  @@index([uploadId])
+  @@index([candidateId])
+}
+
+/// One detected candidate group — this is what the review screen renders.
+model ImportCandidate {
+  id                   String              @id @default(cuid())
+  uploadId             String
+  normalizedMerchant   String
+  suggestedName        String
+  /// = max(amountCents) across matched transactions. Never the average: a
+  /// Safe-to-Spend that's too high because we under-reserved is the failure
+  /// mode that breaks trust in the number.
+  suggestedAmountCents Int
+  minAmountCents       Int
+  maxAmountCents       Int
+  occurrenceCount      Int
+  /// daily | weekly | biweekly | monthly | onetime — same vocabulary as ProgramSpend.freq
+  suggestedCadence     String
+  confidenceTier       String // high | possible
+  anchorDay            Int?
+  anchorWeekday        Int?
+  firstSeenDate        String
+  lastSeenDate         String
+  /// Stable hash of merchant + cadence (not amount, which drifts), so a future
+  /// upload can recognise "already linked to Program Spend X".
+  fingerprint          String
+  status               String              @default("pending") // pending | accepted | rejected
+  linkedProgramSpendId String?
+  upload               ImportUpload        @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  transactions         ImportTransaction[]
+
+  @@index([uploadId])
+  @@index([fingerprint])
 }
 
 model Plan {
