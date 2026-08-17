@@ -6,12 +6,15 @@ import {
   occurrencesFor,
   daysInclusive,
   addDays,
+  projectCash,
+  type Certainty,
   type EngineInput,
   type EngineProgramSpend,
   type EngineSpendEntry,
   type PlanState,
   type ProgramStatus,
   type RecurrenceFreq,
+  type TrancheStatus,
 } from "@/engine";
 
 /**
@@ -25,14 +28,27 @@ type PlanWithRelations = Prisma.PlanGetPayload<{
   include: { programs: true; spends: true; adjustments: true };
 }>;
 
+type MemberWithHoldings = Prisma.MemberGetPayload<{
+  include: { assets: true; tranches: true };
+}>;
+
 const planInclude = {
   programs: true,
   spends: true,
   adjustments: true,
 } as const;
 
-/** Pure mapping from a persisted plan to the engine's input shape. */
-export function planToEngineInput(plan: PlanWithRelations): EngineInput {
+/**
+ * Pure mapping from a persisted plan to the engine's input shape. When the user
+ * has been migrated to the composed-pool model (a Member with assets/tranches),
+ * the pool comes from those rows and the legacy scalar pool + income adjustments
+ * are dropped, so nothing is double-counted. Otherwise the legacy path runs
+ * unchanged.
+ */
+export function planToEngineInput(
+  plan: PlanWithRelations,
+  member?: MemberWithHoldings | null,
+): EngineInput {
   const programs: EngineProgramSpend[] = plan.programs.map((p) => ({
     id: p.id,
     name: p.name,
@@ -64,6 +80,32 @@ export function planToEngineInput(plan: PlanWithRelations): EngineInput {
     note: s.note ?? undefined,
   }));
 
+  // Migrated (composed-pool) plan: read spendable assets, tranches, and the
+  // buffer from the member; seed the legacy scalar to 0 and skip income
+  // adjustments (they're now tranches).
+  if (member && (member.assets.length > 0 || member.tranches.length > 0)) {
+    return {
+      plan: { poolCents: 0, startDate: plan.startDate, endDate: plan.endDate },
+      programs,
+      spends,
+      bufferCents: member.bufferCents,
+      assets: member.assets.map((a) => ({
+        balanceCents: a.balanceCents,
+        spendable: a.spendable,
+      })),
+      tranches: member.tranches.map((t) => ({
+        id: t.id,
+        grossCents: t.grossCents,
+        feesCents: t.feesCents,
+        passthroughCents: t.passthroughCents,
+        date: t.expectedDate,
+        certainty: t.certainty as Certainty,
+        status: t.status as TrancheStatus,
+      })),
+    };
+  }
+
+  // Legacy path: scalar pool + date-gated income adjustments.
   const inflows = plan.adjustments
     .filter((a) => a.type === "income_add")
     .map((a) => ({ date: a.date, amountCents: a.amountCents }));
@@ -88,6 +130,33 @@ async function findActivePlan(userId: string): Promise<PlanWithRelations | null>
   });
 }
 
+/** The user's member row (v1: one per user), with its assets and tranches. Null
+ *  until the plan is migrated to the composed-pool model. */
+async function findMember(
+  userId: string,
+): Promise<MemberWithHoldings | null> {
+  return prisma.member.findFirst({
+    where: { userId },
+    include: { assets: true, tranches: true },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+interface PlanContext {
+  plan: PlanWithRelations;
+  member: MemberWithHoldings | null;
+  input: EngineInput;
+}
+
+/** Load the active plan, the member, and the composed engine input together, so
+ *  every view computes the same (migrated or legacy) number. */
+async function loadPlanContext(userId: string): Promise<PlanContext | null> {
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
+  const member = await findMember(userId);
+  return { plan, member, input: planToEngineInput(plan, member) };
+}
+
 interface LoadedPlan {
   planId: string;
   input: EngineInput;
@@ -95,9 +164,9 @@ interface LoadedPlan {
 }
 
 export async function loadActivePlan(userId: string): Promise<LoadedPlan | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   return {
     planId: plan.id,
     input,
@@ -145,13 +214,22 @@ export interface HomeView {
   spentTodayTotalCents: number;
   // for the reporting flow / new-program screen
   programs: { id: string; name: string }[];
+  // Liquidity strip — the next crunch point within 60 days, or null (§6.2).
+  crunch: HomeCrunch | null;
+}
+
+export interface HomeCrunch {
+  date: string;
+  cashCents: number;
+  shortfallCents: number;
+  clearsOn: string | null;
 }
 
 export async function getHomeView(userId: string): Promise<HomeView | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
 
-  const input = planToEngineInput(plan);
   const state = computePlanState(input, APP_ASOF);
   const daysRemaining = daysInclusive(APP_ASOF, input.plan.endDate);
 
@@ -222,6 +300,11 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     0,
   );
 
+  // Liquidity strip: the first UPCOMING crunch (today .. +60 days). The daily is
+  // never capped by this (§2.2); it only warns. A solvency deficit owns the
+  // message instead, so we suppress the crunch then (§6.3).
+  const crunch = findUpcomingCrunch(input, state, APP_ASOF);
+
   return {
     planId: plan.id,
     input,
@@ -242,6 +325,39 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     programs: input.programs
       .filter((p) => p.status === "active")
       .map((p) => ({ id: p.id, name: p.name })),
+    crunch,
+  };
+}
+
+/** First crunch point on or after `asOf` and within 60 days — the window the
+ *  liquidity strip shows (§6.2). Suppressed when the plan is in solvency deficit
+ *  (§6.3): the deficit banner speaks instead. */
+function findUpcomingCrunch(
+  input: EngineInput,
+  state: PlanState,
+  asOf: string,
+): HomeCrunch | null {
+  if (state.isDeficit) return null;
+  const buffer = input.bufferCents ?? 0;
+  const within = addDays(asOf, 60);
+  const { series } = projectCash(input, asOf);
+  const idx = series.findIndex(
+    (d) => d.date >= asOf && d.date <= within && d.cashCents < buffer,
+  );
+  if (idx === -1) return null;
+  const day = series[idx];
+  let clearsOn: string | null = null;
+  for (let j = idx + 1; j < series.length; j++) {
+    if (series[j].cashCents >= buffer) {
+      clearsOn = series[j].date;
+      break;
+    }
+  }
+  return {
+    date: day.date,
+    cashCents: day.cashCents,
+    shortfallCents: buffer - day.cashCents,
+    clearsOn,
   };
 }
 
@@ -365,10 +481,9 @@ function byNextOccurrence(a: ProgramGroup, b: ProgramGroup): number {
 export async function getProgramsView(
   userId: string,
 ): Promise<{ cards: ProgramCard[]; asOf: string } | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   const state = computePlanState(input, APP_ASOF);
   const groups = buildProgramGroups(plan, input, state, APP_ASOF).sort(
     byNextOccurrence,
@@ -434,9 +549,9 @@ export interface SettingsView {
 export async function getSettingsView(
   userId: string,
 ): Promise<SettingsView | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   const state = computePlanState(input, APP_ASOF);
 
   const reservedCents = input.programs
@@ -484,9 +599,9 @@ export async function getProgramDetail(
   userId: string,
   programId: string,
 ): Promise<ProgramDetail | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   const program = input.programs.find((p) => p.id === programId);
   if (!program) return null;
 
