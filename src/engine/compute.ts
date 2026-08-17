@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import { addDays, daysInclusive } from "./dates";
+import { composePool } from "./intake";
 import { occurrencesFor } from "./occurrences";
 import type {
   EngineInput,
@@ -47,9 +48,15 @@ function computeSnapshot(
   const { plan } = input;
   const start = plan.startDate;
   const inflows = input.inflows ?? [];
+  // Composed pool (E1): spendable assets + included tranche net, counted in full
+  // regardless of tranche date — the steady-number rule (§2.2). Legacy scalar
+  // `poolCents` and date-gated `inflows` still add on top, so old plans are
+  // untouched until they're migrated to assets/tranches.
+  const composed = composePool(input);
 
   const P =
     plan.poolCents +
+    composed.poolProjectedCents +
     inflows.filter((i) => i.date < E).reduce((s, i) => s + i.amountCents, 0);
   const A = input.spends
     .filter((s) => s.date < E)
@@ -84,8 +91,15 @@ function computeSnapshot(
   }
 
   const Bs2s = Decimal.max(0, bankedS2s);
+  // Buffer (E3): the floor the user never wants to touch, subtracted from the
+  // pool before amortizing — never part of Safe-to-Spend (convention C8).
+  const buffer = input.bufferCents ?? 0;
   const RD = daysInclusive(E, plan.endDate);
-  const UR = new Decimal(ARP).minus(RC).minus(Bprog).minus(Bs2s);
+  const UR = new Decimal(ARP)
+    .minus(RC)
+    .minus(Bprog)
+    .minus(Bs2s)
+    .minus(buffer);
   const baseline = RD > 0 ? UR.div(RD) : new Decimal(0);
 
   return { P, A, ARP, RC, Bprog, Bs2s, RD, UR, baseline };
@@ -199,8 +213,11 @@ function simulate(
   return { balance, currentBaseline, buckets, lastSnapshot, occCache };
 }
 
+// Convention C2: floor to the cent, always. Never round up — never promise a
+// cent that doesn't exist. Internal math stays full-precision (baselineExact,
+// exact balance accumulation); only the displayed integer is floored here.
 function toDisplayCents(d: Decimal): number {
-  return d.toDecimalPlaces(0).toNumber();
+  return d.toDecimalPlaces(0, Decimal.ROUND_FLOOR).toNumber();
 }
 
 function externalSnapshot(snap: SnapshotInternal): EngineSnapshot {
