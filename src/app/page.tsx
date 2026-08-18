@@ -251,10 +251,11 @@ export default async function HomePage({
       )}
 
       {/* Navigation — given real weight */}
-      <nav className="mt-8 grid grid-cols-3 gap-3">
+      <nav className="mt-8 grid grid-cols-2 gap-3">
         <NavTile href="/programs" icon="📊" label="Program Spends" />
         <NavTile href="/history" icon="🧾" label="Activity" />
         <NavTile href="/settings" icon="⚙️" label="Plan settings" />
+        <NavTile href="/household" icon="👥" label="Household" />
       </nav>
 
       {/* ZONE 2 — primary action (thumb-reachable) */}

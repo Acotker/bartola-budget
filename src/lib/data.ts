@@ -7,6 +7,11 @@ import {
   daysInclusive,
   addDays,
   projectCash,
+  memberEngineInput,
+  memberState,
+  memberCash,
+  householdCash,
+  sharedBucketBalance,
   type Certainty,
   type EngineInput,
   type EngineProgramSpend,
@@ -15,6 +20,12 @@ import {
   type ProgramStatus,
   type RecurrenceFreq,
   type TrancheStatus,
+  type Household as EngineHousehold,
+  type HouseholdMember as EngineHouseholdMember,
+  type SharedObligation as EngineSharedObligation,
+  type SharedSpend as EngineSharedSpend,
+  type Advance as EngineAdvance,
+  type SplitRule as EngineSplitRule,
 } from "@/engine";
 
 /**
@@ -45,11 +56,11 @@ const planInclude = {
  * are dropped, so nothing is double-counted. Otherwise the legacy path runs
  * unchanged.
  */
-export function planToEngineInput(
-  plan: PlanWithRelations,
-  member?: MemberWithHoldings | null,
-): EngineInput {
-  const programs: EngineProgramSpend[] = plan.programs.map((p) => ({
+type DbProgram = PlanWithRelations["programs"][number];
+
+/** Map a persisted ProgramSpend row to the engine's program shape. */
+function dbProgramToEngine(p: DbProgram): EngineProgramSpend {
+  return {
     id: p.id,
     name: p.name,
     isRecurring: p.isRecurring,
@@ -68,7 +79,14 @@ export function planToEngineInput(
     addedOn: p.addedOn ?? undefined,
     status: p.status as ProgramStatus,
     cancelledOn: p.cancelledOn ?? undefined,
-  }));
+  };
+}
+
+export function planToEngineInput(
+  plan: PlanWithRelations,
+  member?: MemberWithHoldings | null,
+): EngineInput {
+  const programs: EngineProgramSpend[] = plan.programs.map(dbProgramToEngine);
 
   const spends: EngineSpendEntry[] = plan.spends.map((s) => ({
     id: s.id,
@@ -643,4 +661,221 @@ export async function runDailyRollover(): Promise<{
     if (state.isDeficit) deficits += 1;
   }
   return { processed: plans.length, deficits };
+}
+
+// ── Household (P2) — the three Safe-to-Spends ─────────────────────────────────
+
+export interface HouseholdMemberView {
+  memberId: string;
+  displayName: string;
+  isYou: boolean;
+  /** Privacy: is this member's personal number visible to the viewer (§8.3)? */
+  visible: boolean;
+  dailyCents: number | null; // null when private
+  safeTodayCents: number | null;
+  isDeficit: boolean;
+  /** Whether they have a crunch affecting the household — shareable even when
+   *  the personal number isn't (§8.3). */
+  hasCrunch: boolean;
+}
+
+export interface HouseholdView {
+  asOf: string;
+  members: HouseholdMemberView[];
+  /** The shared Safe-to-Spend bucket ("can we afford dinner?"), or null. */
+  shared: { name: string; balanceCents: number } | null;
+  householdHasCrunch: boolean;
+}
+
+/** Assemble the household from the DB and compute all three Safe-to-Spends.
+ *  Returns null when the user isn't in a 2+ member household (the caller shows
+ *  the single-person home instead). */
+export async function getHouseholdView(
+  userId: string,
+): Promise<HouseholdView | null> {
+  const me = await prisma.member.findFirst({ where: { userId } });
+  if (!me) return null;
+
+  const dbMembers = await prisma.member.findMany({
+    where: { householdId: me.householdId },
+    include: {
+      assets: true,
+      tranches: true,
+      user: {
+        include: {
+          plans: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            include: { programs: true, spends: true },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (dbMembers.length < 2) return null; // not a couple
+
+  const household = await prisma.household.findUnique({
+    where: { id: me.householdId },
+  });
+  const firstPlan = dbMembers[0].user.plans[0];
+  const startDate = household?.horizonStart ?? firstPlan?.startDate ?? APP_ASOF;
+  const endDate = household?.horizonEnd ?? firstPlan?.endDate ?? APP_ASOF;
+
+  // Shared obligations across the household's plans (scope = "shared"), deduped.
+  const sharedProgramsMap = new Map<string, DbProgram>();
+  for (const m of dbMembers) {
+    for (const plan of m.user.plans) {
+      for (const p of plan.programs) {
+        if (p.scope === "shared") sharedProgramsMap.set(p.id, p);
+      }
+    }
+  }
+  const sharedPrograms = [...sharedProgramsMap.values()];
+  const sharedIds = new Set(sharedPrograms.map((p) => p.id));
+
+  const ruleIds = sharedPrograms
+    .map((p) => p.splitRuleId)
+    .filter((x): x is string => !!x);
+  const dbRules = ruleIds.length
+    ? await prisma.splitRule.findMany({ where: { id: { in: ruleIds } } })
+    : [];
+  const ruleById = new Map(dbRules.map((r) => [r.id, r]));
+
+  const sharedObligations: EngineSharedObligation[] = sharedPrograms.map((p) => {
+    const dbr = p.splitRuleId ? ruleById.get(p.splitRuleId) : undefined;
+    const rule: EngineSplitRule = dbr
+      ? {
+          type: dbr.type as EngineSplitRule["type"],
+          config: (dbr.config as EngineSplitRule["config"]) ?? {},
+        }
+      : { type: "equal", config: {} };
+    return { program: dbProgramToEngine(p), rule };
+  });
+
+  // Shared spends: SpendEntry against a shared obligation, attributed to the
+  // logging member (its plan owner).
+  const sharedSpends: EngineSharedSpend[] = [];
+  for (const m of dbMembers) {
+    for (const plan of m.user.plans) {
+      for (const s of plan.spends) {
+        if (s.programSpendId && sharedIds.has(s.programSpendId)) {
+          sharedSpends.push({
+            memberId: m.id,
+            sharedObligationId: s.programSpendId,
+            date: s.date,
+            amountCents: s.amountCents,
+          });
+        }
+      }
+    }
+  }
+
+  const memberIds = dbMembers.map((m) => m.id);
+  const dbAdvances = await prisma.advance.findMany({
+    where: {
+      fromMemberId: { in: memberIds },
+      toMemberId: { in: memberIds },
+    },
+  });
+  const advances: EngineAdvance[] = dbAdvances.map((a) => ({
+    fromMemberId: a.fromMemberId,
+    toMemberId: a.toMemberId,
+    amountCents: a.amountCents,
+    date: a.date,
+    expectedSettleDate: a.expectedSettleDate,
+    status: a.status as "open" | "settled",
+  }));
+
+  const engineMembers: EngineHouseholdMember[] = dbMembers.map((m) => {
+    const plan = m.user.plans[0];
+    return {
+      id: m.id,
+      assets: m.assets.map((a) => ({
+        balanceCents: a.balanceCents,
+        spendable: a.spendable,
+      })),
+      tranches: m.tranches.map((t) => ({
+        id: t.id,
+        grossCents: t.grossCents,
+        feesCents: t.feesCents,
+        passthroughCents: t.passthroughCents,
+        date: t.expectedDate,
+        certainty: t.certainty as Certainty,
+        status: t.status as TrancheStatus,
+      })),
+      bufferCents: m.bufferCents,
+      personalObligations: (plan?.programs ?? [])
+        .filter((p) => p.scope !== "shared")
+        .map(dbProgramToEngine),
+      spends: (plan?.spends ?? [])
+        .filter((s) => !(s.programSpendId && sharedIds.has(s.programSpendId)))
+        .map((s) => ({
+          id: s.id,
+          date: s.date,
+          amountCents: s.amountCents,
+          type: (s.type === "program" ? "program" : "s2s") as "program" | "s2s",
+          programSpendId: s.programSpendId ?? undefined,
+        })),
+    };
+  });
+
+  const engineHousehold: EngineHousehold = {
+    startDate,
+    endDate,
+    members: engineMembers,
+    sharedObligations,
+    advances,
+    sharedSpends,
+  };
+
+  const fullTransparency = household?.privacyMode === "full_transparency";
+  const members: HouseholdMemberView[] = dbMembers.map((m) => {
+    const isYou = m.userId === userId;
+    const visible = isYou || fullTransparency;
+    const crunch = memberCash(engineHousehold, m.id, APP_ASOF).crunch;
+    let dailyCents: number | null = null;
+    let safeTodayCents: number | null = null;
+    let isDeficit = false;
+    if (visible) {
+      const state = memberState(engineHousehold, m.id, APP_ASOF);
+      dailyCents = snapshotAt(
+        memberEngineInput(engineHousehold, m.id),
+        addDays(APP_ASOF, 1),
+      ).baselineCents;
+      safeTodayCents = state.s2sBalanceCents;
+      isDeficit = state.isDeficit;
+    }
+    return {
+      memberId: m.id,
+      displayName: isYou ? "You" : m.displayName || "Partner",
+      isYou,
+      visible,
+      dailyCents,
+      safeTodayCents,
+      isDeficit,
+      hasCrunch: crunch != null,
+    };
+  });
+
+  const sharedBucket = sharedPrograms.find(
+    (p) => p.kind === "shared_discretionary",
+  );
+  const shared = sharedBucket
+    ? {
+        name: sharedBucket.name,
+        balanceCents: sharedBucketBalance(
+          engineHousehold,
+          sharedBucket.id,
+          APP_ASOF,
+        ),
+      }
+    : null;
+
+  return {
+    asOf: APP_ASOF,
+    members,
+    shared,
+    householdHasCrunch: householdCash(engineHousehold, APP_ASOF).crunch != null,
+  };
 }
