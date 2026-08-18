@@ -347,18 +347,19 @@ function StepExplain() {
       </h1>
       <div className="space-y-4">
         <p className="text-ink/70 text-sm leading-6">
-          It&apos;s not a budget category — it&apos;s the honest answer to
-          &quot;how much can I spend today without running out before my
-          money starts coming in again?&quot;
+          Think of it as a{" "}
+          <span className="text-ink font-bold">daily allowance that&apos;s actually yours</span>{" "}
+          — no guessing, no guilt trip. Just today&apos;s honest number, so
+          your money lasts the whole way.
         </p>
         <p className="text-ink/70 text-sm leading-6">
-          It&apos;s dynamic: every time you log a spend or update a detail,
-          this number recalculates on its own. You never have to rebalance a
-          budget by hand.
+          And it&apos;s <span className="text-ink font-bold">alive</span>.
+          Log a spend, add some income, change a date — it updates itself.
+          No spreadsheets, no manual math, ever.
         </p>
         <p className="text-ink/70 text-sm leading-6">
-          What you&apos;re about to see is a rough first estimate. The more
-          we know about your real situation, the sharper it gets.
+          Right now it&apos;s just a quick guess from your balance. A few
+          more details next, and it gets a lot sharper.
         </p>
       </div>
     </div>
