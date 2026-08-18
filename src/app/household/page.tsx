@@ -1,16 +1,35 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { getSessionUserId } from "@/lib/auth";
 import { getHouseholdView } from "@/lib/data";
+import { createInviteAction } from "@/app/invite-actions";
 import { formatCents } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function HouseholdPage() {
+export default async function HouseholdPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const userId = await getSessionUserId();
   if (!userId) redirect("/login");
 
   const view = await getHouseholdView(userId);
+  const params = await searchParams;
+  const inviteToken = typeof params.invite === "string" ? params.invite : null;
+  const welcome = params.welcome === "1";
+
+  let inviteUrl: string | null = null;
+  if (inviteToken) {
+    const h = await headers();
+    const host = h.get("host");
+    const proto = h.get("x-forwarded-proto") ?? "http";
+    inviteUrl = host
+      ? `${proto}://${host}/join/${inviteToken}`
+      : `/join/${inviteToken}`;
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-28 pt-8">
@@ -23,16 +42,46 @@ export default async function HouseholdPage() {
         </Link>
       </div>
 
+      {welcome && (
+        <div className="border-positive/30 bg-positive/10 mt-4 rounded-2xl border px-4 py-3">
+          <p className="text-ink text-sm leading-6">
+            You&apos;re in. Your numbers are added to the household below.
+          </p>
+        </div>
+      )}
+
       {!view ? (
         <section className="mt-8">
           <h1 className="font-heading text-ink text-2xl font-bold">
             You&apos;re flying solo
           </h1>
           <p className="text-ink/70 mt-2 text-sm leading-6">
-            Sip works for two. Share rent, groceries, and travel, keep your own
-            number, and see one shared Safe-to-Spend for the things you do
-            together. Partner invites are coming soon.
+            Sip works for two. Invite your partner to share rent, groceries, and
+            travel — you each keep your own Safe-to-Spend, plus one shared
+            number for the things you do together.
           </p>
+
+          {inviteUrl ? (
+            <div className="bg-card border-line mt-6 rounded-2xl border p-4">
+              <p className="text-muted text-xs font-bold uppercase tracking-wider">
+                Share this link
+              </p>
+              <p className="text-ink tnum mt-2 break-all text-sm">{inviteUrl}</p>
+              <p className="text-muted mt-2 text-xs">
+                They&apos;ll log in or sign up, see what you&apos;ve set up, and
+                add their own numbers — no need to redo any of this.
+              </p>
+            </div>
+          ) : (
+            <form action={createInviteAction} className="mt-6">
+              <button
+                type="submit"
+                className="bg-primary flex h-12 w-full items-center justify-center rounded-full text-sm font-bold text-white shadow-lg active:scale-[0.98]"
+              >
+                Invite your partner
+              </button>
+            </form>
+          )}
         </section>
       ) : (
         <>
