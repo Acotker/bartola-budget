@@ -29,7 +29,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   if (!user || !ok) redirect("/login?error=bad");
 
   await createSession(user.id);
-  redirect("/");
+  redirect("/home");
 }
 
 export async function logoutAction(): Promise<void> {

@@ -20,7 +20,7 @@ export default async function SettingsPage() {
         <h1 className="font-heading text-ink text-2xl font-semibold">
           Plan settings
         </h1>
-        <Link href="/" className="text-ink/50 text-sm font-bold">
+        <Link href="/home" className="text-ink/50 text-sm font-bold">
           Done
         </Link>
       </div>

@@ -37,15 +37,15 @@ export async function logSpendAction(formData: FormData): Promise<void> {
   if (type === "program" && !programSpendId) return;
 
   const plan = await prisma.plan.findFirst({ where: { id: planId, userId } });
-  if (!plan) redirect("/");
+  if (!plan) redirect("/home");
 
   const amountCents = Math.round(rawAmount * 100);
   await prisma.spendEntry.create({
     data: { planId, date: APP_ASOF, amountCents, type, programSpendId, note },
   });
 
-  revalidatePath("/");
-  redirect(`/?sipped=${amountCents}&kind=${type}`);
+  revalidatePath("/home");
+  redirect(`/home?sipped=${amountCents}&kind=${type}`);
 }
 
 /** Correct a logged spend (explicit user correction — history is otherwise never rewritten). */
@@ -57,7 +57,7 @@ export async function editSpendAction(formData: FormData): Promise<void> {
   const entry = await prisma.spendEntry.findFirst({
     where: { id, plan: { userId } },
   });
-  if (!entry) redirect("/");
+  if (!entry) redirect("/home");
 
   const rawAmount = Number(formData.get("amount"));
   if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
@@ -70,8 +70,8 @@ export async function editSpendAction(formData: FormData): Promise<void> {
     data: { amountCents: Math.round(rawAmount * 100), note },
   });
 
-  revalidatePath("/");
-  redirect("/");
+  revalidatePath("/home");
+  redirect("/home");
 }
 
 export async function deleteSpendAction(formData: FormData): Promise<void> {
@@ -82,12 +82,12 @@ export async function deleteSpendAction(formData: FormData): Promise<void> {
   const entry = await prisma.spendEntry.findFirst({
     where: { id, plan: { userId } },
   });
-  if (!entry) redirect("/");
+  if (!entry) redirect("/home");
 
   await prisma.spendEntry.delete({ where: { id } });
 
-  revalidatePath("/");
-  redirect("/");
+  revalidatePath("/home");
+  redirect("/home");
 }
 
 /** Create the user's plan during onboarding (Epic 1). */
@@ -119,7 +119,7 @@ export async function createPlanAction(formData: FormData): Promise<void> {
     },
   });
 
-  redirect("/?welcome=1");
+  redirect("/home?welcome=1");
 }
 
 /** Create a Program Spend (Epic 3). addedOn = today so the recalc takes effect tomorrow. */
@@ -166,7 +166,7 @@ export async function createProgramAction(formData: FormData): Promise<void> {
     });
   }
 
-  revalidatePath("/");
+  revalidatePath("/home");
   revalidatePath("/programs");
   redirect("/programs");
 }
@@ -191,7 +191,7 @@ export async function cancelProgramAction(formData: FormData): Promise<void> {
     data: { status: "cancelled", cancelledOn: fromDate },
   });
 
-  revalidatePath("/");
+  revalidatePath("/home");
   revalidatePath("/programs");
   redirect("/programs");
 }
@@ -225,7 +225,7 @@ export async function updatePlanAction(formData: FormData): Promise<void> {
     data: { poolAmountCents: Math.round(rawPool * 100), startDate, endDate },
   });
 
-  revalidatePath("/");
+  revalidatePath("/home");
   revalidatePath("/settings");
   redirect("/settings");
 }
@@ -253,7 +253,7 @@ export async function addInflowAction(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath("/");
+  revalidatePath("/home");
   revalidatePath("/settings");
   redirect("/settings");
 }
@@ -286,7 +286,7 @@ export async function editProgramAction(formData: FormData): Promise<void> {
       where: { id },
       data: { name, amountPerOccurrenceCents, targetDate, addedOn: APP_ASOF },
     });
-    revalidatePath("/");
+    revalidatePath("/home");
     revalidatePath("/programs");
     redirect(`/programs/${id}`);
   }
@@ -328,7 +328,7 @@ export async function editProgramAction(formData: FormData): Promise<void> {
     },
   });
 
-  revalidatePath("/");
+  revalidatePath("/home");
   revalidatePath("/programs");
   redirect(`/programs`);
 }

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import Decimal from "decimal.js";
 import { occurrencesFor } from "../occurrences";
 import { computePlanState, snapshotAt } from "../compute";
+import { daysInclusive } from "../dates";
 import type {
   EngineInput,
   EnginePlan,
@@ -15,6 +16,10 @@ import {
   MARIA_GROCERIES,
   MARIA_TRIPS,
 } from "../fixtures/maria";
+import {
+  landingDemoSafeToSpendCents,
+  LANDING_DEMO_DINNER_CENTS,
+} from "../fixtures/landing-demo";
 
 const mariaInput = (
   programs = MARIA_PROGRAMS,
@@ -347,5 +352,51 @@ describe("Effective-dated editing via linked records (Phase 2)", () => {
     const snap = snapshotAt({ plan, programs: [rent], spends: [] }, "2026-09-11");
     // Only Oct 1, Nov 1, Dec 1 remain reserved from Sep 11 forward (Jan+ dropped).
     expect(snap.remainingCommittedCents).toBe(3 * 150_000);
+  });
+});
+
+describe("Landing page — interactive demo (spec §5.3, tests 1 & 2)", () => {
+  it("the fixture produces the Safe-to-Spend value the demo card displays", () => {
+    expect(landingDemoSafeToSpendCents()).toBe(8_384); // $83.84
+  });
+
+  it("logging the $45 dinner produces the post-tap value", () => {
+    expect(landingDemoSafeToSpendCents(LANDING_DEMO_DINNER_CENTS)).toBe(3_884); // $38.84
+  });
+});
+
+describe("Landing page — Solution section delta (spec §5.3, test 3)", () => {
+  // A self-contained scenario (not the Maria demo fixture) chosen so the
+  // division lands on exact cents with no rounding ambiguity: a 350-day
+  // runway with a $28,791.00 pool gives a $82.26/day Baseline; adding an
+  // $805.00 one-time Program Spend reserves it upfront and drops the
+  // Baseline to exactly $79.96/day — reproducing the locked copy's
+  // "your daily goes from $82.26 to $79.96" to the cent.
+  const plan: EnginePlan = {
+    poolCents: 2_879_100, // $28,791.00
+    startDate: "2026-01-01",
+    endDate: "2026-12-16", // daysInclusive(start, end) === 350
+  };
+
+  const springTrek: EngineProgramSpend = {
+    id: "spring-trek",
+    name: "Spring trek",
+    isRecurring: false,
+    amountPerOccurrenceCents: 80_500, // $805.00
+    targetDate: "2026-06-15",
+  };
+
+  it("the runway's Baseline before the trek is exactly $82.26/day", () => {
+    expect(daysInclusive(plan.startDate, plan.endDate)).toBe(350);
+    const state = computePlanState({ plan, programs: [], spends: [] }, plan.startDate);
+    expect(state.baselineCents).toBe(8_226); // $82.26
+  });
+
+  it("adding the spring trek drops the Baseline to exactly $79.96/day", () => {
+    const state = computePlanState(
+      { plan, programs: [springTrek], spends: [] },
+      plan.startDate,
+    );
+    expect(state.baselineCents).toBe(7_996); // $79.96
   });
 });

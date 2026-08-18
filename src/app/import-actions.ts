@@ -103,7 +103,7 @@ export async function confirmImportAction(
 
   const result = await confirmCandidates(userId, uploadId, decisions);
 
-  revalidatePath("/");
+  revalidatePath("/home");
   revalidatePath("/programs");
   return { created: result.created };
 }
