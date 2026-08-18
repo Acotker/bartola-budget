@@ -27,6 +27,7 @@ export interface IntakeObligationInput {
 }
 
 export interface IntakePayload {
+  displayName: string;
   startDate: string;
   endDate: string;
   bufferCents: number;

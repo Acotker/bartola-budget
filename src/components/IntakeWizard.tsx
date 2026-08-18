@@ -34,6 +34,7 @@ export function IntakeWizard({
   const [pending, setPending] = useState(false);
 
   // Step 1 — horizon
+  const [displayName, setDisplayName] = useState("");
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultEnd);
   const [todayBalance, setTodayBalance] = useState("");
@@ -126,6 +127,7 @@ export function IntakeWizard({
   async function submit() {
     setPending(true);
     const payload: IntakePayload = {
+      displayName,
       startDate,
       endDate,
       bufferCents: dollarsToCents(buffer),
@@ -172,9 +174,11 @@ export function IntakeWizard({
       <div className="mt-6 flex-1">
         {step === 0 && (
           <StepHorizon
+            displayName={displayName}
             startDate={startDate}
             endDate={endDate}
             todayBalance={todayBalance}
+            setDisplayName={setDisplayName}
             setStartDate={setStartDate}
             setEndDate={setEndDate}
             setTodayBalance={setTodayBalance}
@@ -311,16 +315,20 @@ function StepHeader({
 
 // ── Step 1 — Horizon ─────────────────────────────────────────────────────────
 function StepHorizon({
+  displayName,
   startDate,
   endDate,
   todayBalance,
+  setDisplayName,
   setStartDate,
   setEndDate,
   setTodayBalance,
 }: {
+  displayName: string;
   startDate: string;
   endDate: string;
   todayBalance: string;
+  setDisplayName: (v: string) => void;
   setStartDate: (v: string) => void;
   setEndDate: (v: string) => void;
   setTodayBalance: (v: string) => void;
@@ -331,6 +339,14 @@ function StepHorizon({
         Let&apos;s find the window your money has to last. Two dates and what&apos;s
         in your account today.
       </p>
+      <Field label="What should we call you?">
+        <input
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Your name"
+          className="bg-card text-ink placeholder:text-ink/30 w-full rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
+        />
+      </Field>
       <Field label="Start date">
         <input
           type="date"
