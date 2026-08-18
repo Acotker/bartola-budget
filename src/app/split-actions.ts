@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
+import { APP_ASOF } from "@/lib/data";
 
 // Shared costs and their splits (§3.6). A new shared cost is proposed by one
 // member -- their agreement is recorded immediately -- and needs every other
@@ -13,7 +14,15 @@ import { getSessionUserId } from "@/lib/auth";
 // renegotiating an EXISTING agreed split (clearing agreedBy and re-proposing)
 // is out of scope here -- this covers first-time proposals only.
 
-/** Propose a new shared cost, split equally, needing everyone's OK. */
+const isoOrNull = (v: FormDataEntryValue | null): string | null => {
+  const s = String(v ?? "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
+
+/** Propose a new shared cost, split equally, needing everyone's OK. Same
+ *  recurrence options as a personal Program Spend (createProgramAction):
+ *  one-time or daily/weekly/biweekly/monthly, with a day/date and, for
+ *  recurring costs, a start/end window. */
 export async function proposeSharedCostAction(formData: FormData): Promise<void> {
   const userId = await getSessionUserId();
   if (!userId) redirect("/login");
@@ -24,9 +33,11 @@ export async function proposeSharedCostAction(formData: FormData): Promise<void>
 
   const name = String(formData.get("name") ?? "").trim();
   const rawAmount = Number(formData.get("amount"));
+  const kind = String(formData.get("kind") ?? "monthly");
   if (!name || !Number.isFinite(rawAmount) || rawAmount <= 0) {
     redirect("/household?error=split");
   }
+  const amountPerOccurrenceCents = Math.round(rawAmount * 100);
 
   const rule = await prisma.splitRule.create({
     data: {
@@ -35,19 +46,53 @@ export async function proposeSharedCostAction(formData: FormData): Promise<void>
       agreedBy: { [me.id]: new Date().toISOString() },
     },
   });
-  await prisma.programSpend.create({
-    data: {
-      planId: plan.id,
-      name,
-      isRecurring: true,
-      freq: "monthly",
-      anchorDay: 1,
-      amountPerOccurrenceCents: Math.round(rawAmount * 100),
-      scope: "shared",
-      kind: "standard",
-      splitRuleId: rule.id,
-    },
-  });
+
+  if (kind === "onetime") {
+    const targetDate = isoOrNull(formData.get("targetDate"));
+    if (!targetDate) redirect("/household?error=split_date");
+    await prisma.programSpend.create({
+      data: {
+        planId: plan.id,
+        name,
+        isRecurring: false,
+        amountPerOccurrenceCents,
+        targetDate,
+        addedOn: APP_ASOF,
+        scope: "shared",
+        kind: "standard",
+        splitRuleId: rule.id,
+      },
+    });
+  } else {
+    const freq = ["daily", "weekly", "biweekly", "monthly"].includes(kind)
+      ? kind
+      : "monthly";
+    const anchorDay =
+      freq === "monthly" ? Number(formData.get("anchorDay")) || 1 : null;
+    const anchorWeekday =
+      freq === "weekly" || freq === "biweekly"
+        ? Number(formData.get("anchorWeekday")) || 1
+        : null;
+    const startDate = isoOrNull(formData.get("startDate"));
+    const endDate = isoOrNull(formData.get("endDate"));
+    await prisma.programSpend.create({
+      data: {
+        planId: plan.id,
+        name,
+        isRecurring: true,
+        freq,
+        anchorDay,
+        anchorWeekday,
+        amountPerOccurrenceCents,
+        startDate,
+        endDate,
+        addedOn: APP_ASOF,
+        scope: "shared",
+        kind: "standard",
+        splitRuleId: rule.id,
+      },
+    });
+  }
 
   revalidatePath("/household");
   redirect("/household");

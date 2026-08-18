@@ -709,6 +709,8 @@ export interface PendingSplitView {
 
 export interface HouseholdView {
   asOf: string;
+  horizonStart: string;
+  horizonEnd: string;
   members: HouseholdMemberView[];
   /** The shared Safe-to-Spend bucket ("can we afford dinner?"), or null. */
   shared: { name: string; balanceCents: number } | null;
@@ -968,6 +970,8 @@ export async function getHouseholdView(
 
   return {
     asOf: APP_ASOF,
+    horizonStart: startDate,
+    horizonEnd: endDate,
     members,
     shared,
     householdHasCrunch: householdCash(engineHousehold, APP_ASOF).crunch != null,

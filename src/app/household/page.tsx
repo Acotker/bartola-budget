@@ -5,7 +5,8 @@ import { getSessionUserId } from "@/lib/auth";
 import { getHouseholdView } from "@/lib/data";
 import { createInviteAction } from "@/app/invite-actions";
 import { logAdvanceAction, settleAdvanceAction } from "@/app/advance-actions";
-import { proposeSharedCostAction, agreeToSplitAction } from "@/app/split-actions";
+import { agreeToSplitAction } from "@/app/split-actions";
+import { ProposeSharedCostForm } from "@/components/ProposeSharedCostForm";
 import { formatCents, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -202,7 +203,8 @@ export default async function HouseholdPage({
             </p>
           )}
 
-          {/* Propose a shared cost — split equally, needs everyone's OK (§3.6) */}
+          {/* Propose a shared cost — split equally, needs everyone's OK (§3.6).
+              Same one-time/recurring options as a personal Program Spend. */}
           <section className="mt-8">
             <h2 className="font-heading text-ink text-base font-bold">
               Propose a shared cost
@@ -211,30 +213,11 @@ export default async function HouseholdPage({
               Split equally to start — your partner will need to OK it before
               it&apos;s fully confirmed.
             </p>
-            <form
-              action={proposeSharedCostAction}
-              className="bg-card border-line mt-3 space-y-3 rounded-2xl border p-4"
-            >
-              <input
-                name="name"
-                required
-                placeholder="What is it? (e.g. Rent)"
-                className="bg-surface text-ink w-full rounded-xl px-3 py-2.5 text-sm font-bold outline-none"
-              />
-              <input
-                name="amount"
-                inputMode="decimal"
-                required
-                placeholder="Amount per month ($)"
-                className="bg-surface text-ink tnum w-full rounded-xl px-3 py-2.5 text-sm outline-none"
-              />
-              <button
-                type="submit"
-                className="border-primary text-primary flex h-11 w-full items-center justify-center rounded-full border text-sm font-bold active:scale-[0.98]"
-              >
-                Propose
-              </button>
-            </form>
+            <ProposeSharedCostForm
+              startDate={view.horizonStart}
+              endDate={view.horizonEnd}
+              asOf={view.asOf}
+            />
           </section>
 
           {/* Advances — move liquidity only, never the pool or either daily (E6) */}
