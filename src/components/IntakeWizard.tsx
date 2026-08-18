@@ -20,8 +20,11 @@ import {
   type ObligationRow,
   type TrancheRow,
 } from "@/components/intake-steps";
+import { formatDateYear, splitCents } from "@/lib/format";
 
-const STEPS = ["Horizon", "Assets", "Money coming in", "Obligations", "Review"];
+// Steps 0-2 are the aha-moment intro (quick start, explain, reveal) and don't
+// show step-count chrome. Steps 3-6 are the existing refinement flow, unchanged.
+const REFINE_STEPS = ["Assets", "Money coming in", "Obligations", "Review"];
 
 export function IntakeWizard({
   defaultStart,
@@ -164,12 +167,16 @@ export function IntakeWizard({
     await createIntake(payload);
   }
 
-  const canAdvance = step > 0 || (validHorizon && dollarsToCents(todayBalance) >= 0);
+  const canAdvance = step !== 0 || (validHorizon && dollarsToCents(todayBalance) >= 0);
+  const LAST_STEP = 6; // Review
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-32 pt-8">
-      {/* Progress + precision meter */}
-      <StepHeader step={step} precision={precision} />
+      {step < 3 ? (
+        <span className="font-heading text-ink text-lg font-bold">Sip</span>
+      ) : (
+        <StepHeader step={step - 3} precision={precision} />
+      )}
 
       <div className="mt-6 flex-1">
         {step === 0 && (
@@ -184,7 +191,11 @@ export function IntakeWizard({
             setTodayBalance={setTodayBalance}
           />
         )}
-        {step === 1 && (
+        {step === 1 && <StepExplain />}
+        {step === 2 && (
+          <StepReveal preview={preview} startDate={startDate} endDate={endDate} />
+        )}
+        {step === 3 && (
           <StepAssets
             assets={assets}
             setAssets={setAssets}
@@ -192,55 +203,69 @@ export function IntakeWizard({
             setBuffer={setBuffer}
           />
         )}
-        {step === 2 && (
+        {step === 4 && (
           <StepTranches tranches={tranches} setTranches={setTranches} />
         )}
-        {step === 3 && (
+        {step === 5 && (
           <StepObligations
             obligations={obligations}
             setObligations={setObligations}
           />
         )}
-        {step === 4 && <StepReview preview={preview} />}
+        {step === 6 && <StepReview preview={preview} />}
       </div>
 
       {/* Footer nav */}
       <div className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md border-t border-line bg-surface/95 px-6 py-4 backdrop-blur">
-        <div className="flex items-center gap-3">
-          {step > 0 && (
+        {step === 2 ? (
+          <div className="space-y-2">
             <button
-              onClick={() => setStep((s) => s - 1)}
-              className="text-ink border-line bg-card rounded-full border px-5 py-3 text-sm font-bold"
+              disabled={pending}
+              onClick={() => setStep(3)}
+              className="bg-primary w-full rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-40"
             >
-              Back
+              Refine my number →
             </button>
-          )}
-          {step < STEPS.length - 1 ? (
             <button
-              disabled={!canAdvance}
-              onClick={() => setStep((s) => s + 1)}
-              className="bg-primary flex-1 rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-40"
-            >
-              {step === 0 ? "Continue" : "Next"}
-            </button>
-          ) : (
-            <button
-              disabled={pending || !validHorizon}
+              disabled={pending}
               onClick={submit}
-              className="bg-primary flex-1 rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-40"
+              className="text-muted w-full py-1 text-center text-xs font-bold"
             >
-              {pending ? "Setting up…" : "Start sipping"}
+              {pending ? "Setting up…" : "Start with this number"}
             </button>
-          )}
-        </div>
-        {step === 0 && validHorizon && (
-          <button
-            onClick={submit}
-            disabled={pending}
-            className="text-muted mt-2 w-full text-center text-xs font-bold"
-          >
-            Just show me my number →
-          </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            {step > 0 && (
+              <button
+                onClick={() => setStep((s) => s - 1)}
+                className="text-ink border-line bg-card rounded-full border px-5 py-3 text-sm font-bold"
+              >
+                Back
+              </button>
+            )}
+            {step < LAST_STEP ? (
+              <button
+                disabled={!canAdvance}
+                onClick={() => setStep((s) => s + 1)}
+                className="bg-primary flex-1 rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {step === 0
+                  ? "Continue"
+                  : step === 1
+                    ? "Show me my number →"
+                    : "Next"}
+              </button>
+            ) : (
+              <button
+                disabled={pending || !validHorizon}
+                onClick={submit}
+                className="bg-primary flex-1 rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-40"
+              >
+                {pending ? "Setting up…" : "Start sipping"}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -291,11 +316,11 @@ function StepHeader({
       <div className="flex items-center justify-between">
         <span className="font-heading text-ink text-lg font-bold">Sip</span>
         <span className="text-muted text-xs font-bold">
-          Step {step + 1} of {STEPS.length}
+          Step {step + 1} of {REFINE_STEPS.length}
         </span>
       </div>
       <h1 className="font-heading text-ink mt-4 text-2xl font-bold">
-        {STEPS[step]}
+        {REFINE_STEPS[step]}
       </h1>
       {/* precision meter */}
       <div className="mt-4">
@@ -313,7 +338,71 @@ function StepHeader({
   );
 }
 
-// ── Step 1 — Horizon ─────────────────────────────────────────────────────────
+// ── Step 1 (intro) — What is Sip ─────────────────────────────────────────────
+function StepExplain() {
+  return (
+    <div className="space-y-6">
+      <h1 className="font-heading text-ink text-2xl font-bold">
+        Meet your Safe-to-Spend
+      </h1>
+      <div className="space-y-4">
+        <p className="text-ink/70 text-sm leading-6">
+          It&apos;s not a budget category — it&apos;s the honest answer to
+          &quot;how much can I spend today without running out before my
+          money starts coming in again?&quot;
+        </p>
+        <p className="text-ink/70 text-sm leading-6">
+          It&apos;s dynamic: every time you log a spend or update a detail,
+          this number recalculates on its own. You never have to rebalance a
+          budget by hand.
+        </p>
+        <p className="text-ink/70 text-sm leading-6">
+          What you&apos;re about to see is a rough first estimate. The more
+          we know about your real situation, the sharper it gets.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 2 (intro) — Reveal, the first number the user ever sees ────────────
+function StepReveal({
+  preview,
+  startDate,
+  endDate,
+}: {
+  preview: { daily: number; isDeficit: boolean } | null;
+  startDate: string;
+  endDate: string;
+}) {
+  const daily = preview ? splitCents(Math.max(0, preview.daily)) : null;
+  return (
+    <div className="flex flex-col items-center pt-6 text-center">
+      <p className="text-muted text-xs font-bold uppercase tracking-wider">
+        Every day, you can spend
+      </p>
+      {!preview || preview.isDeficit || !daily ? (
+        <p className="text-alert font-heading mt-4 text-3xl font-bold">
+          Doesn&apos;t add up yet
+        </p>
+      ) : (
+        <div className="font-heading text-ink tnum mt-2 text-6xl font-bold tracking-tight">
+          {daily.sign}
+          <span className="text-4xl align-top">$</span>
+          {daily.whole}
+          <span className="text-3xl">.{daily.frac}</span>
+        </div>
+      )}
+      <p className="text-muted mt-4 max-w-[280px] text-sm leading-6">
+        {preview && !preview.isDeficit
+          ? `From ${formatDateYear(startDate)} to ${formatDateYear(endDate)} — spend this much and your money lasts the whole time.`
+          : "With what you've entered so far, the math doesn't clear the whole window — refining your number next can help find room."}
+      </p>
+    </div>
+  );
+}
+
+// ── Step 0 — Quick start ─────────────────────────────────────────────────────
 function StepHorizon({
   displayName,
   startDate,
@@ -336,8 +425,8 @@ function StepHorizon({
   return (
     <div className="space-y-5">
       <p className="text-ink/70 text-sm leading-6">
-        Let&apos;s find the window your money has to last. Two dates and what&apos;s
-        in your account today.
+        Quick start — what&apos;s in your account today, and the window it
+        has to last.
       </p>
       <Field label="What should we call you?">
         <input
@@ -347,39 +436,41 @@ function StepHorizon({
           className="bg-card text-ink placeholder:text-ink/30 w-full rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
         />
       </Field>
-      <Field label="Start date">
-        <input
-          type="date"
-          value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          className="bg-card text-ink w-full rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
-        />
-      </Field>
-      <Field label="When does money start coming in again?">
-        <input
-          type="date"
-          value={endDate}
-          onChange={(e) => setEndDate(e.target.value)}
-          className="bg-card text-ink w-full rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
-        />
-        <p className="text-muted mt-1.5 text-xs leading-5">
-          Not graduation — the day your first real paycheck lands. That&apos;s
-          usually 6–10 weeks later, and it can move your daily number 8–12%.
-        </p>
-      </Field>
       <Field label="What's in your account today? ($)">
         <input
           inputMode="decimal"
           value={todayBalance}
           onChange={(e) => setTodayBalance(e.target.value)}
           placeholder="6000"
-          className="bg-card text-ink tnum w-full rounded-xl px-4 py-3 text-lg font-bold shadow-sm outline-none"
+          className="bg-card text-ink tnum w-full rounded-xl px-4 py-4 text-3xl font-bold shadow-sm outline-none"
         />
         <p className="text-muted mt-1.5 text-xs">
-          Just your spendable checking/savings — the money that&apos;s actually
-          here. Loans and income that arrive later come next.
+          Just your spendable checking/savings — an approximate number is
+          fine. Loans and income that arrive later come next.
         </p>
       </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Start date">
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            className="bg-card text-ink w-full rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
+          />
+        </Field>
+        <Field label="Money coming in again">
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="bg-card text-ink w-full rounded-xl px-4 py-3 text-sm shadow-sm outline-none"
+          />
+        </Field>
+      </div>
+      <p className="text-muted -mt-2 text-xs leading-5">
+        Not graduation — the day your first real paycheck lands. That&apos;s
+        usually 6–10 weeks later, and it can move your daily number 8–12%.
+      </p>
     </div>
   );
 }
