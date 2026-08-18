@@ -34,3 +34,14 @@ export interface IntakePayload {
   tranches: IntakeTrancheInput[];
   obligations: IntakeObligationInput[];
 }
+
+/** Abbreviated intake for a partner joining an existing household (§8.2). The
+ *  horizon is already set by the household, so only personal holdings are
+ *  captured — never a repeat of household setup. */
+export interface PartnerIntakePayload {
+  displayName: string;
+  bufferCents: number;
+  assets: IntakeAssetInput[];
+  tranches: IntakeTrancheInput[];
+  obligations: IntakeObligationInput[];
+}
