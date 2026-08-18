@@ -693,6 +693,20 @@ export interface HouseholdAdvanceView {
   status: "open" | "settled";
 }
 
+/** A shared cost whose split hasn't been confirmed by every member yet (§3.6).
+ *  Informational, not a gate — the obligation still reserves and splits while
+ *  pending; this is what's awaiting agreement, not the money. */
+export interface PendingSplitView {
+  splitRuleId: string;
+  programId: string;
+  name: string;
+  amountPerOccurrenceCents: number;
+  freq: string | null;
+  splitLabel: string;
+  proposedByName: string;
+  status: "needs_your_ok" | "waiting_on_partner";
+}
+
 export interface HouseholdView {
   asOf: string;
   members: HouseholdMemberView[];
@@ -703,6 +717,8 @@ export interface HouseholdView {
   otherMembers: { memberId: string; displayName: string }[];
   /** Open advances involving the viewer, newest first. */
   advances: HouseholdAdvanceView[];
+  /** Shared costs still awaiting everyone's agreement. */
+  pendingSplits: PendingSplitView[];
 }
 
 /** Assemble the household from the DB and compute all three Safe-to-Spends.
@@ -770,6 +786,37 @@ export async function getHouseholdView(
       : { type: "equal", config: {} };
     return { program: dbProgramToEngine(p), rule };
   });
+
+  // Split confirmation (§3.6): a shared split needs BOTH members to agree.
+  // This is an awareness/confirmation layer, not a gate -- an unconfirmed split
+  // still reserves and splits normally (consistent with "never blocks"); the
+  // banner is what's pending, not the money.
+  const allMemberIds = dbMembers.map((m) => m.id);
+  const nameOf = (id: string) =>
+    dbMembers.find((m) => m.id === id)?.displayName || "Partner";
+  const pendingSplits: PendingSplitView[] = [];
+  for (const p of sharedPrograms) {
+    if (!p.splitRuleId) continue;
+    const rule = ruleById.get(p.splitRuleId);
+    if (!rule) continue;
+    const agreedBy = (rule.agreedBy as Record<string, string> | null) ?? {};
+    const agreedIds = Object.keys(agreedBy);
+    if (allMemberIds.every((id) => agreedIds.includes(id))) continue; // fully agreed
+
+    const proposerId =
+      agreedIds.sort((a, b) => (agreedBy[a] < agreedBy[b] ? -1 : 1))[0] ?? null;
+    pendingSplits.push({
+      splitRuleId: rule.id,
+      programId: p.id,
+      name: p.name,
+      amountPerOccurrenceCents: p.amountPerOccurrenceCents,
+      freq: p.freq,
+      splitLabel: splitLabelFor(rule.type),
+      proposedByName:
+        proposerId === me.id ? "You" : proposerId ? nameOf(proposerId) : "Someone",
+      status: agreedIds.includes(me.id) ? "waiting_on_partner" : "needs_your_ok",
+    });
+  }
 
   // Shared spends: SpendEntry against a shared obligation, attributed to the
   // logging member (its plan owner).
@@ -926,6 +973,7 @@ export async function getHouseholdView(
     householdHasCrunch: householdCash(engineHousehold, APP_ASOF).crunch != null,
     otherMembers,
     advances: advanceViews,
+    pendingSplits,
   };
 }
 

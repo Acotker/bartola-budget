@@ -5,6 +5,7 @@ import { getSessionUserId } from "@/lib/auth";
 import { getHouseholdView } from "@/lib/data";
 import { createInviteAction } from "@/app/invite-actions";
 import { logAdvanceAction, settleAdvanceAction } from "@/app/advance-actions";
+import { proposeSharedCostAction, agreeToSplitAction } from "@/app/split-actions";
 import { formatCents, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -101,6 +102,53 @@ export default async function HouseholdPage({
             </section>
           )}
 
+          {/* Split confirmation (§3.6) — a shared cost isn't fully agreed until
+              everyone has OK'd it. Never blocks: it still reserves and splits
+              while pending; this is what's awaiting agreement, not the money. */}
+          {view.pendingSplits.length > 0 && (
+            <section className="mt-6 space-y-2">
+              {view.pendingSplits.map((s) => (
+                <div
+                  key={s.splitRuleId}
+                  className={`rounded-2xl border p-4 ${
+                    s.status === "needs_your_ok"
+                      ? "border-accent/30 bg-accent/5"
+                      : "bg-card border-line"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-ink text-sm font-bold">{s.name}</p>
+                      <p className="text-muted text-xs">
+                        {s.proposedByName} proposed{" "}
+                        {formatCents(s.amountPerOccurrenceCents)}
+                        {s.freq === "monthly" && "/mo"}, {s.splitLabel}
+                      </p>
+                    </div>
+                    <span className="tnum text-ink shrink-0 text-sm font-bold">
+                      {formatCents(s.amountPerOccurrenceCents)}
+                    </span>
+                  </div>
+                  {s.status === "needs_your_ok" ? (
+                    <form action={agreeToSplitAction} className="mt-3">
+                      <input type="hidden" name="splitRuleId" value={s.splitRuleId} />
+                      <button
+                        type="submit"
+                        className="bg-primary rounded-full px-4 py-2 text-xs font-bold text-white"
+                      >
+                        I agree
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="text-muted mt-2 text-xs">
+                      Waiting on your partner to confirm.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </section>
+          )}
+
           {/* Each member's personal Safe-to-Spend */}
           <section className="mt-6 space-y-3">
             <h2 className="font-heading text-ink text-base font-bold">
@@ -153,6 +201,41 @@ export default async function HouseholdPage({
               smooth it over.
             </p>
           )}
+
+          {/* Propose a shared cost — split equally, needs everyone's OK (§3.6) */}
+          <section className="mt-8">
+            <h2 className="font-heading text-ink text-base font-bold">
+              Propose a shared cost
+            </h2>
+            <p className="text-muted mt-1 text-xs leading-5">
+              Split equally to start — your partner will need to OK it before
+              it&apos;s fully confirmed.
+            </p>
+            <form
+              action={proposeSharedCostAction}
+              className="bg-card border-line mt-3 space-y-3 rounded-2xl border p-4"
+            >
+              <input
+                name="name"
+                required
+                placeholder="What is it? (e.g. Rent)"
+                className="bg-surface text-ink w-full rounded-xl px-3 py-2.5 text-sm font-bold outline-none"
+              />
+              <input
+                name="amount"
+                inputMode="decimal"
+                required
+                placeholder="Amount per month ($)"
+                className="bg-surface text-ink tnum w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+              />
+              <button
+                type="submit"
+                className="border-primary text-primary flex h-11 w-full items-center justify-center rounded-full border text-sm font-bold active:scale-[0.98]"
+              >
+                Propose
+              </button>
+            </form>
+          </section>
 
           {/* Advances — move liquidity only, never the pool or either daily (E6) */}
           <section className="mt-8">
