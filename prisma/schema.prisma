@@ -109,6 +109,19 @@ model Household {
   privacyMode  String   @default("shared_only") // full_transparency | shared_only
   createdAt    DateTime @default(now())
   members      Member[]
+  invites      Invite[]
+}
+
+// A share-link invitation into an existing household (§8.2). One person sets
+// up; the invitee follows the link, accepts, and lands on an abbreviated
+// intake for just their own holdings — never repeating household setup.
+model Invite {
+  id          String    @id @default(cuid())
+  householdId String
+  token       String    @unique
+  createdAt   DateTime  @default(now())
+  usedAt      DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 }
 
 model Member {
