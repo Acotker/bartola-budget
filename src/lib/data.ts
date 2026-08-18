@@ -879,3 +879,90 @@ export async function getHouseholdView(
     householdHasCrunch: householdCash(engineHousehold, APP_ASOF).crunch != null,
   };
 }
+
+// ── Invite proposal view (§8.2) ───────────────────────────────────────────────
+
+export interface InviteSharedItem {
+  name: string;
+  amountPerOccurrenceCents: number;
+  freq: string | null;
+  splitLabel: string;
+}
+
+export interface InviteView {
+  status: "valid" | "used" | "not_found";
+  proposerName: string;
+  horizonStart: string;
+  horizonEnd: string;
+  sharedObligations: InviteSharedItem[];
+}
+
+function splitLabelFor(type: string | undefined): string {
+  if (type === "equal") return "split equally";
+  if (type === "single_payer") return "covered by one of you";
+  if (type === "fixed_amounts") return "split by fixed amounts";
+  if (type === "custom_percent") return "split proportionally";
+  return "split by agreement";
+}
+
+/** What an invitee sees before accepting: who invited them, the household's
+ *  horizon, and the shared costs + how they're split (§8.2 — "your partner
+ *  proposed this"). Doesn't require the viewer to have a session. */
+export async function getInviteView(token: string): Promise<InviteView | null> {
+  const invite = await prisma.invite.findUnique({
+    where: { token },
+    include: { household: { include: { members: true } } },
+  });
+  if (!invite) return { status: "not_found", proposerName: "", horizonStart: "", horizonEnd: "", sharedObligations: [] };
+  if (invite.usedAt) {
+    return {
+      status: "used",
+      proposerName: "",
+      horizonStart: invite.household.horizonStart,
+      horizonEnd: invite.household.horizonEnd,
+      sharedObligations: [],
+    };
+  }
+
+  const proposer =
+    invite.household.members.find((m) => m.role === "owner") ??
+    invite.household.members[0];
+  const proposerUser = proposer
+    ? await prisma.user.findUnique({ where: { id: proposer.userId } })
+    : null;
+  const proposerName =
+    proposer?.displayName?.trim() ||
+    proposerUser?.email.split("@")[0] ||
+    "Your partner";
+
+  const memberUserIds = invite.household.members.map((m) => m.userId);
+  const plans = memberUserIds.length
+    ? await prisma.plan.findMany({
+        where: { userId: { in: memberUserIds } },
+        include: { programs: { where: { scope: "shared" } } },
+      })
+    : [];
+  const sharedPrograms = plans.flatMap((p) => p.programs);
+  const ruleIds = sharedPrograms
+    .map((p) => p.splitRuleId)
+    .filter((x): x is string => !!x);
+  const rules = ruleIds.length
+    ? await prisma.splitRule.findMany({ where: { id: { in: ruleIds } } })
+    : [];
+  const ruleById = new Map(rules.map((r) => [r.id, r]));
+
+  const sharedObligations: InviteSharedItem[] = sharedPrograms.map((p) => ({
+    name: p.name,
+    amountPerOccurrenceCents: p.amountPerOccurrenceCents,
+    freq: p.freq,
+    splitLabel: splitLabelFor(p.splitRuleId ? ruleById.get(p.splitRuleId)?.type : undefined),
+  }));
+
+  return {
+    status: "valid",
+    proposerName,
+    horizonStart: invite.household.horizonStart,
+    horizonEnd: invite.household.horizonEnd,
+    sharedObligations,
+  };
+}
