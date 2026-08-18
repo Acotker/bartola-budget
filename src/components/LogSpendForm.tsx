@@ -8,7 +8,7 @@ import {
   type EngineInput,
 } from "@/engine";
 import { logSpendAction } from "@/app/actions";
-import { formatCents } from "@/lib/format";
+import { formatCents, formatLongDate, formatShortDate } from "@/lib/format";
 
 interface Props {
   planId: string;
@@ -37,6 +37,11 @@ export function LogSpendForm({
     preselected ?? programs[0]?.id ?? "",
   );
   const [note, setNote] = useState("");
+  // Backdating: 0 = today, 1 = yesterday, 2 = the day before. Never lets the
+  // entry land before the plan started.
+  const [logDay, setLogDay] = useState(0);
+  const maxLogDay = [0, 1, 2].filter((d) => addDays(asOf, -d) >= input.plan.startDate).length - 1;
+  const entryDate = addDays(asOf, -logDay);
 
   // Keypad entry: build the amount string digit by digit.
   const press = (key: string) => {
@@ -66,7 +71,7 @@ export function LogSpendForm({
       ...input.spends,
       {
         id: "__preview__",
-        date: asOf,
+        date: entryDate,
         amountCents: cents,
         type,
         programSpendId: type === "program" ? programSpendId : undefined,
@@ -143,6 +148,7 @@ export function LogSpendForm({
       <input type="hidden" name="planId" value={planId} />
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="amount" value={amount} />
+      <input type="hidden" name="date" value={entryDate} />
       {type === "program" && (
         <input type="hidden" name="programSpendId" value={programSpendId} />
       )}
@@ -223,6 +229,37 @@ export function LogSpendForm({
           )}
         </div>
       )}
+
+      {/* When did this happen? (backdating) */}
+      <div className="mt-3">
+        <span className="text-muted mb-2 block text-[11.5px] font-medium tracking-wide uppercase">
+          When did this happen?
+        </span>
+        <div className="flex gap-2">
+          {["Today", "Yesterday", formatShortDate(addDays(asOf, -2))]
+            .slice(0, maxLogDay + 1)
+            .map((label, d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setLogDay(d)}
+                className={`rounded-full border px-3.5 py-2 text-sm font-bold transition ${
+                  logDay === d
+                    ? "border-primary bg-primary text-white"
+                    : "border-line bg-card text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+        </div>
+        {logDay > 0 && (
+          <p className="text-primary mt-2.5 text-[12.5px] leading-relaxed">
+            Logged on {formatLongDate(entryDate)}, taken out of your balance
+            now. Days you&apos;ve already lived aren&apos;t rewritten.
+          </p>
+        )}
+      </div>
 
       {/* Optional note */}
       <input

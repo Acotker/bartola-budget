@@ -34,9 +34,21 @@ export async function logSpendAction(formData: FormData): Promise<void> {
   const plan = await prisma.plan.findFirst({ where: { id: planId, userId } });
   if (!plan) redirect("/");
 
+  // Backdating (§ Log a spend): only today or one of the last two days, and
+  // never before the plan started. Anything else falls back to today.
+  const requestedDate = isoOrNull(formData.get("date"));
+  const backdateFloor = addDays(APP_ASOF, -2);
+  const date =
+    requestedDate &&
+    requestedDate <= APP_ASOF &&
+    requestedDate >= backdateFloor &&
+    requestedDate >= plan.startDate
+      ? requestedDate
+      : APP_ASOF;
+
   const amountCents = Math.round(rawAmount * 100);
   await prisma.spendEntry.create({
-    data: { planId, date: APP_ASOF, amountCents, type, programSpendId, note },
+    data: { planId, date, amountCents, type, programSpendId, note },
   });
 
   revalidatePath("/");
