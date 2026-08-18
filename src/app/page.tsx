@@ -4,6 +4,7 @@ import { getHomeView } from "@/lib/data";
 import { getSessionUserId } from "@/lib/auth";
 import { logoutAction } from "@/app/auth-actions";
 import { S2SNumber } from "@/components/S2SNumber";
+import { CrunchStrip } from "@/components/CrunchStrip";
 import { formatCents, formatShortDate, formatDateYear } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -106,6 +107,10 @@ export default async function HomePage({
           </div>
         </section>
       )}
+
+      {/* Liquidity strip — a timing heads-up, never a block (§6.2). Suppressed
+          when the plan is a deficit, so it never shows alongside the banner. */}
+      {view.crunch && <CrunchStrip crunch={view.crunch} />}
 
       {/* ZONE 3 — Ready to sip */}
       <section className="mt-8">
@@ -246,10 +251,11 @@ export default async function HomePage({
       )}
 
       {/* Navigation — given real weight */}
-      <nav className="mt-8 grid grid-cols-3 gap-3">
+      <nav className="mt-8 grid grid-cols-2 gap-3">
         <NavTile href="/programs" icon="📊" label="Program Spends" />
         <NavTile href="/history" icon="🧾" label="Activity" />
         <NavTile href="/settings" icon="⚙️" label="Plan settings" />
+        <NavTile href="/household" icon="👥" label="Household" />
       </nav>
 
       {/* ZONE 2 — primary action (thumb-reachable) */}

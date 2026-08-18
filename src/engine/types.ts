@@ -47,11 +47,50 @@ export interface EngineInflow {
   amountCents: number;
 }
 
+// ── Financial-intake model (E1/E3) ──────────────────────────────────────────
+// The scalar pool is being replaced by a *composed* pool: spendable assets that
+// exist today plus every included future tranche, net of fees/passthrough.
+
+/** Certainty of a future tranche. `confirmed`/`likely` enter the pool; `hoped`
+ *  is excluded and surfaced separately as upside (convention C7). */
+export type Certainty = "confirmed" | "likely" | "hoped";
+
+/** Lifecycle of a tranche. `cancelled` is the only status removed from the pool;
+ *  `late` stays in (convention 7.1). */
+export type TrancheStatus = "pending" | "received" | "late" | "cancelled";
+
+/** Money that exists today. `spendable=false` (emergency fund, retirement) is
+ *  visible in the UI but excluded from the pool (§3.3). */
+export interface EngineAsset {
+  balanceCents: number;
+  spendable: boolean;
+}
+
+/** A future (or already-received) arrival of money. Only `netCents` enters the
+ *  pool; net is derived as max(0, gross − fees − passthrough) (§3.4). For the
+ *  *rate*, tranches count across the full horizon regardless of `date` — the
+ *  steady-number rule (§2.2). `date` governs liquidity/cash-projection only. */
+export interface EngineTranche {
+  id: string;
+  grossCents: number;
+  feesCents: number;
+  passthroughCents: number;
+  date: ISODate;
+  certainty: Certainty;
+  /** Defaults to "pending" when absent. */
+  status?: TrancheStatus;
+}
+
 export interface EngineInput {
   plan: EnginePlan;
   programs: EngineProgramSpend[];
   spends: EngineSpendEntry[];
   inflows?: EngineInflow[];
+  /** Composed-pool inputs (E1/E3). When present, their spendable/included totals
+   *  add to `plan.poolCents`. `bufferCents` is subtracted before amortizing. */
+  assets?: EngineAsset[];
+  tranches?: EngineTranche[];
+  bufferCents?: number;
 }
 
 export interface ProgramBucketState {

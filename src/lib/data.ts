@@ -6,12 +6,26 @@ import {
   occurrencesFor,
   daysInclusive,
   addDays,
+  projectCash,
+  memberEngineInput,
+  memberState,
+  memberCash,
+  householdCash,
+  sharedBucketBalance,
+  type Certainty,
   type EngineInput,
   type EngineProgramSpend,
   type EngineSpendEntry,
   type PlanState,
   type ProgramStatus,
   type RecurrenceFreq,
+  type TrancheStatus,
+  type Household as EngineHousehold,
+  type HouseholdMember as EngineHouseholdMember,
+  type SharedObligation as EngineSharedObligation,
+  type SharedSpend as EngineSharedSpend,
+  type Advance as EngineAdvance,
+  type SplitRule as EngineSplitRule,
 } from "@/engine";
 
 /**
@@ -25,15 +39,28 @@ type PlanWithRelations = Prisma.PlanGetPayload<{
   include: { programs: true; spends: true; adjustments: true };
 }>;
 
+type MemberWithHoldings = Prisma.MemberGetPayload<{
+  include: { assets: true; tranches: true };
+}>;
+
 const planInclude = {
   programs: true,
   spends: true,
   adjustments: true,
 } as const;
 
-/** Pure mapping from a persisted plan to the engine's input shape. */
-export function planToEngineInput(plan: PlanWithRelations): EngineInput {
-  const programs: EngineProgramSpend[] = plan.programs.map((p) => ({
+/**
+ * Pure mapping from a persisted plan to the engine's input shape. When the user
+ * has been migrated to the composed-pool model (a Member with assets/tranches),
+ * the pool comes from those rows and the legacy scalar pool + income adjustments
+ * are dropped, so nothing is double-counted. Otherwise the legacy path runs
+ * unchanged.
+ */
+type DbProgram = PlanWithRelations["programs"][number];
+
+/** Map a persisted ProgramSpend row to the engine's program shape. */
+function dbProgramToEngine(p: DbProgram): EngineProgramSpend {
+  return {
     id: p.id,
     name: p.name,
     isRecurring: p.isRecurring,
@@ -52,7 +79,14 @@ export function planToEngineInput(plan: PlanWithRelations): EngineInput {
     addedOn: p.addedOn ?? undefined,
     status: p.status as ProgramStatus,
     cancelledOn: p.cancelledOn ?? undefined,
-  }));
+  };
+}
+
+export function planToEngineInput(
+  plan: PlanWithRelations,
+  member?: MemberWithHoldings | null,
+): EngineInput {
+  const programs: EngineProgramSpend[] = plan.programs.map(dbProgramToEngine);
 
   const spends: EngineSpendEntry[] = plan.spends.map((s) => ({
     id: s.id,
@@ -64,6 +98,32 @@ export function planToEngineInput(plan: PlanWithRelations): EngineInput {
     note: s.note ?? undefined,
   }));
 
+  // Migrated (composed-pool) plan: read spendable assets, tranches, and the
+  // buffer from the member; seed the legacy scalar to 0 and skip income
+  // adjustments (they're now tranches).
+  if (member && (member.assets.length > 0 || member.tranches.length > 0)) {
+    return {
+      plan: { poolCents: 0, startDate: plan.startDate, endDate: plan.endDate },
+      programs,
+      spends,
+      bufferCents: member.bufferCents,
+      assets: member.assets.map((a) => ({
+        balanceCents: a.balanceCents,
+        spendable: a.spendable,
+      })),
+      tranches: member.tranches.map((t) => ({
+        id: t.id,
+        grossCents: t.grossCents,
+        feesCents: t.feesCents,
+        passthroughCents: t.passthroughCents,
+        date: t.expectedDate,
+        certainty: t.certainty as Certainty,
+        status: t.status as TrancheStatus,
+      })),
+    };
+  }
+
+  // Legacy path: scalar pool + date-gated income adjustments.
   const inflows = plan.adjustments
     .filter((a) => a.type === "income_add")
     .map((a) => ({ date: a.date, amountCents: a.amountCents }));
@@ -88,6 +148,33 @@ async function findActivePlan(userId: string): Promise<PlanWithRelations | null>
   });
 }
 
+/** The user's member row (v1: one per user), with its assets and tranches. Null
+ *  until the plan is migrated to the composed-pool model. */
+async function findMember(
+  userId: string,
+): Promise<MemberWithHoldings | null> {
+  return prisma.member.findFirst({
+    where: { userId },
+    include: { assets: true, tranches: true },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+interface PlanContext {
+  plan: PlanWithRelations;
+  member: MemberWithHoldings | null;
+  input: EngineInput;
+}
+
+/** Load the active plan, the member, and the composed engine input together, so
+ *  every view computes the same (migrated or legacy) number. */
+async function loadPlanContext(userId: string): Promise<PlanContext | null> {
+  const plan = await findActivePlan(userId);
+  if (!plan) return null;
+  const member = await findMember(userId);
+  return { plan, member, input: planToEngineInput(plan, member) };
+}
+
 interface LoadedPlan {
   planId: string;
   input: EngineInput;
@@ -95,9 +182,9 @@ interface LoadedPlan {
 }
 
 export async function loadActivePlan(userId: string): Promise<LoadedPlan | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   return {
     planId: plan.id,
     input,
@@ -145,13 +232,22 @@ export interface HomeView {
   spentTodayTotalCents: number;
   // for the reporting flow / new-program screen
   programs: { id: string; name: string }[];
+  // Liquidity strip — the next crunch point within 60 days, or null (§6.2).
+  crunch: HomeCrunch | null;
+}
+
+export interface HomeCrunch {
+  date: string;
+  cashCents: number;
+  shortfallCents: number;
+  clearsOn: string | null;
 }
 
 export async function getHomeView(userId: string): Promise<HomeView | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
 
-  const input = planToEngineInput(plan);
   const state = computePlanState(input, APP_ASOF);
   const daysRemaining = daysInclusive(APP_ASOF, input.plan.endDate);
 
@@ -222,6 +318,11 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     0,
   );
 
+  // Liquidity strip: the first UPCOMING crunch (today .. +60 days). The daily is
+  // never capped by this (§2.2); it only warns. A solvency deficit owns the
+  // message instead, so we suppress the crunch then (§6.3).
+  const crunch = findUpcomingCrunch(input, state, APP_ASOF);
+
   return {
     planId: plan.id,
     input,
@@ -242,6 +343,39 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     programs: input.programs
       .filter((p) => p.status === "active")
       .map((p) => ({ id: p.id, name: p.name })),
+    crunch,
+  };
+}
+
+/** First crunch point on or after `asOf` and within 60 days — the window the
+ *  liquidity strip shows (§6.2). Suppressed when the plan is in solvency deficit
+ *  (§6.3): the deficit banner speaks instead. */
+function findUpcomingCrunch(
+  input: EngineInput,
+  state: PlanState,
+  asOf: string,
+): HomeCrunch | null {
+  if (state.isDeficit) return null;
+  const buffer = input.bufferCents ?? 0;
+  const within = addDays(asOf, 60);
+  const { series } = projectCash(input, asOf);
+  const idx = series.findIndex(
+    (d) => d.date >= asOf && d.date <= within && d.cashCents < buffer,
+  );
+  if (idx === -1) return null;
+  const day = series[idx];
+  let clearsOn: string | null = null;
+  for (let j = idx + 1; j < series.length; j++) {
+    if (series[j].cashCents >= buffer) {
+      clearsOn = series[j].date;
+      break;
+    }
+  }
+  return {
+    date: day.date,
+    cashCents: day.cashCents,
+    shortfallCents: buffer - day.cashCents,
+    clearsOn,
   };
 }
 
@@ -365,10 +499,9 @@ function byNextOccurrence(a: ProgramGroup, b: ProgramGroup): number {
 export async function getProgramsView(
   userId: string,
 ): Promise<{ cards: ProgramCard[]; asOf: string } | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   const state = computePlanState(input, APP_ASOF);
   const groups = buildProgramGroups(plan, input, state, APP_ASOF).sort(
     byNextOccurrence,
@@ -434,9 +567,9 @@ export interface SettingsView {
 export async function getSettingsView(
   userId: string,
 ): Promise<SettingsView | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   const state = computePlanState(input, APP_ASOF);
 
   const reservedCents = input.programs
@@ -484,9 +617,9 @@ export async function getProgramDetail(
   userId: string,
   programId: string,
 ): Promise<ProgramDetail | null> {
-  const plan = await findActivePlan(userId);
-  if (!plan) return null;
-  const input = planToEngineInput(plan);
+  const ctx = await loadPlanContext(userId);
+  if (!ctx) return null;
+  const { plan, input } = ctx;
   const program = input.programs.find((p) => p.id === programId);
   if (!program) return null;
 
@@ -528,4 +661,409 @@ export async function runDailyRollover(): Promise<{
     if (state.isDeficit) deficits += 1;
   }
   return { processed: plans.length, deficits };
+}
+
+// ── Household (P2) — the three Safe-to-Spends ─────────────────────────────────
+
+export interface HouseholdMemberView {
+  memberId: string;
+  displayName: string;
+  isYou: boolean;
+  /** Privacy: is this member's personal number visible to the viewer (§8.3)? */
+  visible: boolean;
+  dailyCents: number | null; // null when private
+  safeTodayCents: number | null;
+  isDeficit: boolean;
+  /** Whether they have a crunch affecting the household — shareable even when
+   *  the personal number isn't (§8.3). */
+  hasCrunch: boolean;
+}
+
+/** An inter-member advance from the current viewer's side of it (E6, §3.7).
+ *  "you_gave" = you're the payer, waiting to be paid back; "you_owe" = you're
+ *  the one who received and still owes it. */
+export interface HouseholdAdvanceView {
+  id: string;
+  direction: "you_gave" | "you_owe";
+  otherMemberId: string;
+  otherName: string;
+  amountCents: number;
+  date: string;
+  expectedSettleDate: string | null;
+  status: "open" | "settled";
+}
+
+/** A shared cost whose split hasn't been confirmed by every member yet (§3.6).
+ *  Informational, not a gate — the obligation still reserves and splits while
+ *  pending; this is what's awaiting agreement, not the money. */
+export interface PendingSplitView {
+  splitRuleId: string;
+  programId: string;
+  name: string;
+  amountPerOccurrenceCents: number;
+  freq: string | null;
+  splitLabel: string;
+  proposedByName: string;
+  status: "needs_your_ok" | "waiting_on_partner";
+}
+
+export interface HouseholdView {
+  asOf: string;
+  horizonStart: string;
+  horizonEnd: string;
+  members: HouseholdMemberView[];
+  /** The shared Safe-to-Spend bucket ("can we afford dinner?"), or null. */
+  shared: { name: string; balanceCents: number } | null;
+  householdHasCrunch: boolean;
+  /** Other members you could log an advance with. */
+  otherMembers: { memberId: string; displayName: string }[];
+  /** Open advances involving the viewer, newest first. */
+  advances: HouseholdAdvanceView[];
+  /** Shared costs still awaiting everyone's agreement. */
+  pendingSplits: PendingSplitView[];
+}
+
+/** Assemble the household from the DB and compute all three Safe-to-Spends.
+ *  Returns null when the user isn't in a 2+ member household (the caller shows
+ *  the single-person home instead). */
+export async function getHouseholdView(
+  userId: string,
+): Promise<HouseholdView | null> {
+  const me = await prisma.member.findFirst({ where: { userId } });
+  if (!me) return null;
+
+  const dbMembers = await prisma.member.findMany({
+    where: { householdId: me.householdId },
+    include: {
+      assets: true,
+      tranches: true,
+      user: {
+        include: {
+          plans: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            include: { programs: true, spends: true },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (dbMembers.length < 2) return null; // not a couple
+
+  const household = await prisma.household.findUnique({
+    where: { id: me.householdId },
+  });
+  const firstPlan = dbMembers[0].user.plans[0];
+  const startDate = household?.horizonStart ?? firstPlan?.startDate ?? APP_ASOF;
+  const endDate = household?.horizonEnd ?? firstPlan?.endDate ?? APP_ASOF;
+
+  // Shared obligations across the household's plans (scope = "shared"), deduped.
+  const sharedProgramsMap = new Map<string, DbProgram>();
+  for (const m of dbMembers) {
+    for (const plan of m.user.plans) {
+      for (const p of plan.programs) {
+        if (p.scope === "shared") sharedProgramsMap.set(p.id, p);
+      }
+    }
+  }
+  const sharedPrograms = [...sharedProgramsMap.values()];
+  const sharedIds = new Set(sharedPrograms.map((p) => p.id));
+
+  const ruleIds = sharedPrograms
+    .map((p) => p.splitRuleId)
+    .filter((x): x is string => !!x);
+  const dbRules = ruleIds.length
+    ? await prisma.splitRule.findMany({ where: { id: { in: ruleIds } } })
+    : [];
+  const ruleById = new Map(dbRules.map((r) => [r.id, r]));
+
+  const sharedObligations: EngineSharedObligation[] = sharedPrograms.map((p) => {
+    const dbr = p.splitRuleId ? ruleById.get(p.splitRuleId) : undefined;
+    const rule: EngineSplitRule = dbr
+      ? {
+          type: dbr.type as EngineSplitRule["type"],
+          config: (dbr.config as EngineSplitRule["config"]) ?? {},
+        }
+      : { type: "equal", config: {} };
+    return { program: dbProgramToEngine(p), rule };
+  });
+
+  // Split confirmation (§3.6): a shared split needs BOTH members to agree.
+  // This is an awareness/confirmation layer, not a gate -- an unconfirmed split
+  // still reserves and splits normally (consistent with "never blocks"); the
+  // banner is what's pending, not the money.
+  const allMemberIds = dbMembers.map((m) => m.id);
+  const nameOf = (id: string) =>
+    dbMembers.find((m) => m.id === id)?.displayName || "Partner";
+  const pendingSplits: PendingSplitView[] = [];
+  for (const p of sharedPrograms) {
+    if (!p.splitRuleId) continue;
+    const rule = ruleById.get(p.splitRuleId);
+    if (!rule) continue;
+    const agreedBy = (rule.agreedBy as Record<string, string> | null) ?? {};
+    const agreedIds = Object.keys(agreedBy);
+    if (allMemberIds.every((id) => agreedIds.includes(id))) continue; // fully agreed
+
+    const proposerId =
+      agreedIds.sort((a, b) => (agreedBy[a] < agreedBy[b] ? -1 : 1))[0] ?? null;
+    pendingSplits.push({
+      splitRuleId: rule.id,
+      programId: p.id,
+      name: p.name,
+      amountPerOccurrenceCents: p.amountPerOccurrenceCents,
+      freq: p.freq,
+      splitLabel: splitLabelFor(rule.type),
+      proposedByName:
+        proposerId === me.id ? "You" : proposerId ? nameOf(proposerId) : "Someone",
+      status: agreedIds.includes(me.id) ? "waiting_on_partner" : "needs_your_ok",
+    });
+  }
+
+  // Shared spends: SpendEntry against a shared obligation, attributed to the
+  // logging member (its plan owner).
+  const sharedSpends: EngineSharedSpend[] = [];
+  for (const m of dbMembers) {
+    for (const plan of m.user.plans) {
+      for (const s of plan.spends) {
+        if (s.programSpendId && sharedIds.has(s.programSpendId)) {
+          sharedSpends.push({
+            memberId: m.id,
+            sharedObligationId: s.programSpendId,
+            date: s.date,
+            amountCents: s.amountCents,
+          });
+        }
+      }
+    }
+  }
+
+  const memberIds = dbMembers.map((m) => m.id);
+  const dbAdvances = await prisma.advance.findMany({
+    where: {
+      fromMemberId: { in: memberIds },
+      toMemberId: { in: memberIds },
+    },
+  });
+  const advances: EngineAdvance[] = dbAdvances.map((a) => ({
+    fromMemberId: a.fromMemberId,
+    toMemberId: a.toMemberId,
+    amountCents: a.amountCents,
+    date: a.date,
+    expectedSettleDate: a.expectedSettleDate,
+    status: a.status as "open" | "settled",
+  }));
+
+  const engineMembers: EngineHouseholdMember[] = dbMembers.map((m) => {
+    const plan = m.user.plans[0];
+    return {
+      id: m.id,
+      assets: m.assets.map((a) => ({
+        balanceCents: a.balanceCents,
+        spendable: a.spendable,
+      })),
+      tranches: m.tranches.map((t) => ({
+        id: t.id,
+        grossCents: t.grossCents,
+        feesCents: t.feesCents,
+        passthroughCents: t.passthroughCents,
+        date: t.expectedDate,
+        certainty: t.certainty as Certainty,
+        status: t.status as TrancheStatus,
+      })),
+      bufferCents: m.bufferCents,
+      personalObligations: (plan?.programs ?? [])
+        .filter((p) => p.scope !== "shared")
+        .map(dbProgramToEngine),
+      spends: (plan?.spends ?? [])
+        .filter((s) => !(s.programSpendId && sharedIds.has(s.programSpendId)))
+        .map((s) => ({
+          id: s.id,
+          date: s.date,
+          amountCents: s.amountCents,
+          type: (s.type === "program" ? "program" : "s2s") as "program" | "s2s",
+          programSpendId: s.programSpendId ?? undefined,
+        })),
+    };
+  });
+
+  const engineHousehold: EngineHousehold = {
+    startDate,
+    endDate,
+    members: engineMembers,
+    sharedObligations,
+    advances,
+    sharedSpends,
+  };
+
+  const fullTransparency = household?.privacyMode === "full_transparency";
+  const members: HouseholdMemberView[] = dbMembers.map((m) => {
+    const isYou = m.userId === userId;
+    const visible = isYou || fullTransparency;
+    const crunch = memberCash(engineHousehold, m.id, APP_ASOF).crunch;
+    let dailyCents: number | null = null;
+    let safeTodayCents: number | null = null;
+    let isDeficit = false;
+    if (visible) {
+      const state = memberState(engineHousehold, m.id, APP_ASOF);
+      dailyCents = snapshotAt(
+        memberEngineInput(engineHousehold, m.id),
+        addDays(APP_ASOF, 1),
+      ).baselineCents;
+      safeTodayCents = state.s2sBalanceCents;
+      isDeficit = state.isDeficit;
+    }
+    return {
+      memberId: m.id,
+      displayName: isYou ? "You" : m.displayName || "Partner",
+      isYou,
+      visible,
+      dailyCents,
+      safeTodayCents,
+      isDeficit,
+      hasCrunch: crunch != null,
+    };
+  });
+
+  const sharedBucket = sharedPrograms.find(
+    (p) => p.kind === "shared_discretionary",
+  );
+  const shared = sharedBucket
+    ? {
+        name: sharedBucket.name,
+        balanceCents: sharedBucketBalance(
+          engineHousehold,
+          sharedBucket.id,
+          APP_ASOF,
+        ),
+      }
+    : null;
+
+  const meRow = dbMembers.find((m) => m.userId === userId);
+  const nameById = new Map(
+    dbMembers.map((m) => [m.id, m.displayName || "Partner"]),
+  );
+  const otherMembers = dbMembers
+    .filter((m) => m.userId !== userId)
+    .map((m) => ({ memberId: m.id, displayName: nameById.get(m.id) ?? "Partner" }));
+
+  const advanceViews: HouseholdAdvanceView[] = meRow
+    ? dbAdvances
+        .filter((a) => a.status === "open")
+        .filter((a) => a.fromMemberId === meRow.id || a.toMemberId === meRow.id)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))
+        .map((a) => {
+          const gave = a.fromMemberId === meRow.id;
+          const otherId = gave ? a.toMemberId : a.fromMemberId;
+          return {
+            id: a.id,
+            direction: gave ? "you_gave" : "you_owe",
+            otherMemberId: otherId,
+            otherName: nameById.get(otherId) ?? "Partner",
+            amountCents: a.amountCents,
+            date: a.date,
+            expectedSettleDate: a.expectedSettleDate,
+            status: a.status as "open" | "settled",
+          };
+        })
+    : [];
+
+  return {
+    asOf: APP_ASOF,
+    horizonStart: startDate,
+    horizonEnd: endDate,
+    members,
+    shared,
+    householdHasCrunch: householdCash(engineHousehold, APP_ASOF).crunch != null,
+    otherMembers,
+    advances: advanceViews,
+    pendingSplits,
+  };
+}
+
+// ── Invite proposal view (§8.2) ───────────────────────────────────────────────
+
+export interface InviteSharedItem {
+  name: string;
+  amountPerOccurrenceCents: number;
+  freq: string | null;
+  splitLabel: string;
+}
+
+export interface InviteView {
+  status: "valid" | "used" | "not_found";
+  proposerName: string;
+  horizonStart: string;
+  horizonEnd: string;
+  sharedObligations: InviteSharedItem[];
+}
+
+function splitLabelFor(type: string | undefined): string {
+  if (type === "equal") return "split equally";
+  if (type === "single_payer") return "covered by one of you";
+  if (type === "fixed_amounts") return "split by fixed amounts";
+  if (type === "custom_percent") return "split proportionally";
+  return "split by agreement";
+}
+
+/** What an invitee sees before accepting: who invited them, the household's
+ *  horizon, and the shared costs + how they're split (§8.2 — "your partner
+ *  proposed this"). Doesn't require the viewer to have a session. */
+export async function getInviteView(token: string): Promise<InviteView | null> {
+  const invite = await prisma.invite.findUnique({
+    where: { token },
+    include: { household: { include: { members: true } } },
+  });
+  if (!invite) return { status: "not_found", proposerName: "", horizonStart: "", horizonEnd: "", sharedObligations: [] };
+  if (invite.usedAt) {
+    return {
+      status: "used",
+      proposerName: "",
+      horizonStart: invite.household.horizonStart,
+      horizonEnd: invite.household.horizonEnd,
+      sharedObligations: [],
+    };
+  }
+
+  const proposer =
+    invite.household.members.find((m) => m.role === "owner") ??
+    invite.household.members[0];
+  const proposerUser = proposer
+    ? await prisma.user.findUnique({ where: { id: proposer.userId } })
+    : null;
+  const proposerName =
+    proposer?.displayName?.trim() ||
+    proposerUser?.email.split("@")[0] ||
+    "Your partner";
+
+  const memberUserIds = invite.household.members.map((m) => m.userId);
+  const plans = memberUserIds.length
+    ? await prisma.plan.findMany({
+        where: { userId: { in: memberUserIds } },
+        include: { programs: { where: { scope: "shared" } } },
+      })
+    : [];
+  const sharedPrograms = plans.flatMap((p) => p.programs);
+  const ruleIds = sharedPrograms
+    .map((p) => p.splitRuleId)
+    .filter((x): x is string => !!x);
+  const rules = ruleIds.length
+    ? await prisma.splitRule.findMany({ where: { id: { in: ruleIds } } })
+    : [];
+  const ruleById = new Map(rules.map((r) => [r.id, r]));
+
+  const sharedObligations: InviteSharedItem[] = sharedPrograms.map((p) => ({
+    name: p.name,
+    amountPerOccurrenceCents: p.amountPerOccurrenceCents,
+    freq: p.freq,
+    splitLabel: splitLabelFor(p.splitRuleId ? ruleById.get(p.splitRuleId)?.type : undefined),
+  }));
+
+  return {
+    status: "valid",
+    proposerName,
+    horizonStart: invite.household.horizonStart,
+    horizonEnd: invite.household.horizonEnd,
+    sharedObligations,
+  };
 }

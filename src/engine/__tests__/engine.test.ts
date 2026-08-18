@@ -49,21 +49,24 @@ describe("occurrencesFor — recurrence projection through the runway", () => {
 });
 
 describe("Example 1 — onboarding walk-down as programs are added", () => {
-  it("steps 164.38 -> 115.07 -> 93.70 -> 83.84 as each program is added", () => {
+  // Values are floored to the cent (convention C2): each exact baseline here has
+  // a fractional part >= .5, so the displayed cent is one below the brief's
+  // half-up figures (e.g. 8383.561 -> 8383, not 8384).
+  it("steps 164.38 -> 115.06 -> 93.69 -> 83.83 as each program is added", () => {
     const base = computePlanState(mariaInput([]), "2026-09-01");
-    expect(base.baselineCents).toBe(16_438); // $164.38
+    expect(base.baselineCents).toBe(16_438); // $164.38 (16438.356 floored)
 
     const withRent = computePlanState(mariaInput([MARIA_RENT]), "2026-09-01");
-    expect(withRent.baselineCents).toBe(11_507); // $115.07
+    expect(withRent.baselineCents).toBe(11_506); // $115.06 (11506.849 floored)
 
     const withGroc = computePlanState(
       mariaInput([MARIA_RENT, MARIA_GROCERIES]),
       "2026-09-01",
     );
-    expect(withGroc.baselineCents).toBe(9_370); // $93.70
+    expect(withGroc.baselineCents).toBe(9_369); // $93.69 (9369.863 floored)
 
     const full = computePlanState(mariaInput(), "2026-09-01");
-    expect(full.baselineCents).toBe(8_384); // $83.84
+    expect(full.baselineCents).toBe(8_383); // $83.83 (8383.561 floored)
   });
 });
 
@@ -76,11 +79,11 @@ describe("Example 2 — a normal day: rollover, no recalc", () => {
 
   it("rolls unspent S2S forward and does not recalculate", () => {
     const state = computePlanState(mariaInput(MARIA_PROGRAMS, spends), "2026-09-02");
-    // Baseline unchanged (no overspend).
-    expect(state.baselineCents).toBe(8_384);
+    // Baseline unchanged (no overspend); 8383.561 floored -> 8383.
+    expect(state.baselineCents).toBe(8_383);
     // Full-precision rollover: 77.8356 carried + 83.8356 granted = 161.6712 -> $161.67.
-    // (The brief prints $161.68 by summing pre-rounded displays; the engine
-    //  rounds only once, at the end, per the "round only for display" rule.)
+    // The engine accumulates at full precision and floors only for display, so the
+    // whole-cent balance is 16167 regardless of how per-day displays are summed.
     expect(state.s2sBalanceCents).toBe(16_167);
     // Groceries keeps a $30 surplus, still spendable.
     const groc = state.buckets.find((b) => b.programSpendId === "groceries");
@@ -117,12 +120,12 @@ describe("Example 3 — S2S overspend triggers a forward recalc", () => {
     expect(snap.s2sBankedCents).toBe(0); // B_s2s absorbed
     expect(snap.remainingDays).toBe(355); // RD
     expect(snap.unallocatedRemainderCents).toBe(2_926_164); // UR
-    expect(snap.baselineCents).toBe(8_243); // $82.43
+    expect(snap.baselineCents).toBe(8_242); // $82.42 (8242.715 floored)
   });
 
-  it("consistency check 1: identical calc WITHOUT the flight returns the original $83.84", () => {
+  it("consistency check 1: identical calc WITHOUT the flight returns the original $83.83", () => {
     const snap = snapshotAt(noFlight, "2026-09-11");
-    expect(snap.baselineCents).toBe(8_384);
+    expect(snap.baselineCents).toBe(8_383);
     // exact original baseline is 30,600 / 365 = 83.8356... cents
     const exact = new Decimal(snap.baselineExactCents);
     expect(exact.minus("8383.5616").abs().lt("0.01")).toBe(true);
@@ -138,9 +141,10 @@ describe("Example 3 — S2S overspend triggers a forward recalc", () => {
 
   it("resets the accumulated S2S balance to 0 the day after the overspend", () => {
     const state = computePlanState(withFlight, "2026-09-11");
-    // Morning of Sep 11 balance was reset to 0, then Sep 11 grants the new baseline.
-    expect(state.baselineCents).toBe(8_243);
-    expect(state.s2sBalanceCents).toBe(8_243);
+    // Morning of Sep 11 balance was reset to 0, then Sep 11 grants the new baseline
+    // (8242.715 floored -> 8242).
+    expect(state.baselineCents).toBe(8_242);
+    expect(state.s2sBalanceCents).toBe(8_242);
   });
 });
 
@@ -190,7 +194,7 @@ describe("Example 7 — spending a program surplus does not recalculate", () => 
     const state = computePlanState(mariaInput(MARIA_PROGRAMS, spends), "2026-10-03");
     const trips = state.buckets.find((b) => b.programSpendId === "trips");
     expect(trips?.balanceCents).toBe(5_000); // $50 remains
-    expect(state.baselineCents).toBe(8_384); // unchanged — no recalc
+    expect(state.baselineCents).toBe(8_383); // unchanged — no recalc (8383.561 floored)
     expect(state.isDeficit).toBe(false);
   });
 });

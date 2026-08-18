@@ -15,6 +15,7 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const error = typeof params.error === "string" ? MESSAGES[params.error] : null;
+  const next = typeof params.next === "string" ? params.next : null;
 
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center px-6 py-12">
@@ -25,6 +26,11 @@ export default async function LoginPage({
         Sip, don&apos;t gulp. Make your money last, a little every day.
       </p>
 
+      {next && (
+        <p className="border-primary/25 bg-primary/5 text-ink mt-6 rounded-xl border px-4 py-3 text-sm">
+          Log in or create an account to accept your invite.
+        </p>
+      )}
       {error && (
         <p className="border-alert/30 bg-alert/5 text-alert mt-6 rounded-xl border px-4 py-3 text-sm">
           {error}
@@ -35,6 +41,7 @@ export default async function LoginPage({
         <label className="text-ink/50 text-xs font-bold uppercase tracking-wider">
           Log in
         </label>
+        {next && <input type="hidden" name="next" value={next} />}
         <input
           name="email"
           type="email"
@@ -65,6 +72,7 @@ export default async function LoginPage({
         <label className="text-ink/50 text-xs font-bold uppercase tracking-wider">
           Create an account
         </label>
+        {next && <input type="hidden" name="next" value={next} />}
         <input
           name="email"
           type="email"

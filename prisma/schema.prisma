@@ -8,7 +8,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Runtime uses the pooled connection; schema changes (db push) use Neon's
   // direct connection — pooled/pgbouncer can't run DDL reliably.
   url       = env("DATABASE_URL")
@@ -21,6 +21,7 @@ model User {
   passwordHash String
   createdAt    DateTime @default(now())
   plans        Plan[]
+  members      Member[]
 }
 
 model Plan {
@@ -54,8 +55,16 @@ model ProgramSpend {
   cancelledOn              String?
   groupId                  String? // links effective-dated versions of the same Program Spend
   createdAt                DateTime     @default(now())
+  // Obligation extension (§3.5). Nullable/defaulted so existing rows are valid;
+  // `scope`/`kind` used in P2 household, `owner`/`splitRule` for shared costs.
+  scope                    String       @default("personal") // personal | shared
+  ownerMemberId            String? // set only when scope = personal
+  splitRuleId              String? // set only when scope = shared
+  kind                     String       @default("standard") // standard | shared_discretionary
   plan                     Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
   spends                   SpendEntry[]
+  owner                    Member?      @relation(fields: [ownerMemberId], references: [id], onDelete: SetNull)
+  splitRule                SplitRule?   @relation(fields: [splitRuleId], references: [id], onDelete: SetNull)
 }
 
 model SpendEntry {
@@ -83,4 +92,125 @@ model PlanAdjustment {
   note        String?
   createdAt   DateTime @default(now())
   plan        Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+}
+
+// ── Financial-intake model (spec Part 3) ─────────────────────────────────────
+// Designed so phase 2 (couples) only ADDS rows, never changes semantics. In v1
+// every household has exactly one Member, created automatically and invisible in
+// the UI. All money is integer cents; all dates are ISO 'YYYY-MM-DD' strings.
+
+model Household {
+  id           String   @id @default(cuid())
+  horizonStart String
+  horizonEnd   String
+  // IANA name (e.g. America/Los_Angeles). Required for a timezone-correct daily
+  // rollover — the 5am-UTC bug (B2, §7.4).
+  timezone     String   @default("America/New_York")
+  privacyMode  String   @default("shared_only") // full_transparency | shared_only
+  createdAt    DateTime @default(now())
+  members      Member[]
+  invites      Invite[]
+}
+
+// A share-link invitation into an existing household (§8.2). One person sets
+// up; the invitee follows the link, accepts, and lands on an abbreviated
+// intake for just their own holdings — never repeating household setup.
+model Invite {
+  id          String    @id @default(cuid())
+  householdId String
+  token       String    @unique
+  createdAt   DateTime  @default(now())
+  usedAt      DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model Member {
+  id            String          @id @default(cuid())
+  householdId   String
+  userId        String
+  displayName   String
+  role          String          @default("owner") // owner | partner
+  // Floor the member never wants to touch. Subtracted from the POOL, not S2S (§3.2, C8).
+  bufferCents   Int             @default(0)
+  createdAt     DateTime        @default(now())
+  household     Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assets        Asset[]
+  tranches      InflowTranche[]
+  obligations   ProgramSpend[]
+  advancesFrom  Advance[]       @relation("advanceFrom")
+  advancesTo    Advance[]       @relation("advanceTo")
+  balanceChecks BalanceCheck[]
+}
+
+model Asset {
+  id           String   @id @default(cuid())
+  memberId     String
+  label        String // "Chase checking", "HYSA"
+  balanceCents Int
+  // false = exists but outside the pool (retirement, emergency fund) — visible,
+  // greyed, never inflating the number (§3.3).
+  spendable    Boolean  @default(true)
+  asOf         String // anchor for reconciliation
+  createdAt    DateTime @default(now())
+  member       Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+}
+
+model InflowTranche {
+  id               String   @id @default(cuid())
+  memberId         String
+  label            String // "Grad PLUS — spring term"
+  kind             String // loan_disbursement | stipend | scholarship | internship_income | gift | partner_income | tax_refund | other
+  grossCents       Int // what the aid letter says
+  feesCents        Int      @default(0) // origination fee, etc.
+  passthroughCents Int      @default(0) // tuition/fees the school withholds; never reaches the account
+  expectedDate     String
+  certainty        String   @default("confirmed") // confirmed | likely | hoped
+  status           String   @default("pending") // pending | received | late | cancelled
+  actualCents      Int? // filled when receipt is confirmed
+  actualDate       String?
+  createdAt        DateTime @default(now())
+  member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  // net = max(0, gross − fees − passthrough) and residualOwed = max(0, fees +
+  // passthrough − gross) are DERIVED in the engine (deriveTranche), not stored,
+  // to avoid drift. Only net enters the pool (§3.4).
+}
+
+model SplitRule {
+  id          String         @id @default(cuid())
+  type        String // equal | fixed_amounts | custom_percent | single_payer
+  config      Json // amounts or percentages per type
+  // {type, snapshot, resolved_at} when produced by a proportional calculator;
+  // proportional splits resolve once and FREEZE into custom_percent (§3.6, T10).
+  derivedFrom Json?
+  agreedBy    Json? // {member_id: timestamp} — a shared split needs both to confirm
+  createdAt   DateTime       @default(now())
+  obligations ProgramSpend[]
+}
+
+model Advance {
+  id                 String   @id @default(cuid())
+  fromMemberId       String
+  toMemberId         String
+  amountCents        Int
+  date               String
+  expectedSettleDate String?
+  status             String   @default("open") // open | settled
+  createdAt          DateTime @default(now())
+  // An advance moves LIQUIDITY, not pool: the advancer loses cash but not pool,
+  // the receiver gains cash but not pool. No Safe-to-Spend is distorted (§3.7, T11).
+  fromMember         Member   @relation("advanceFrom", fields: [fromMemberId], references: [id], onDelete: Cascade)
+  toMember           Member   @relation("advanceTo", fields: [toMemberId], references: [id], onDelete: Cascade)
+}
+
+model BalanceCheck {
+  id             String   @id @default(cuid())
+  memberId       String
+  date           String
+  reportedCents  Int
+  projectedCents Int
+  deltaCents     Int
+  resolution     String   @default("pending") // logged_adjustment | dismissed | pending
+  createdAt      DateTime @default(now())
+  member         Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }
