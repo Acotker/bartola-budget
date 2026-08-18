@@ -58,15 +58,23 @@ export interface CashProjection {
   atRiskCents: number;
 }
 
-/** Cash on a specific date, for callers/tests that want a single day. */
-export function cashOn(projection: CashProjection, date: ISODate): number {
+/** Cash on a specific date, for callers/tests that want a single day. Accepts
+ *  any projection-like value with a `series` (member or household). */
+export function cashOn(projection: { series: CashDay[] }, date: ISODate): number {
   const hit = projection.series.find((d) => d.date === date);
   return hit ? hit.cashCents : 0;
+}
+
+export interface ProjectCashOptions {
+  /** Signed cash deltas outside the plan itself — e.g. inter-member advances
+   *  (E6). They move liquidity only; they never touch the pool or the daily. */
+  extraCashEvents?: { date: ISODate; amountCents: number }[];
 }
 
 export function projectCash(
   input: EngineInput,
   asOf: ISODate = input.plan.startDate,
+  opts: ProjectCashOptions = {},
 ): CashProjection {
   const { plan } = input;
   const start = plan.startDate;
@@ -106,6 +114,10 @@ export function projectCash(
   for (const s of input.spends) {
     if (s.type === "s2s") bump(s.date, -s.amountCents);
   }
+
+  // Advances and other external liquidity moves (E6) — signed, already netted
+  // per member by the caller.
+  for (const e of opts.extraCashEvents ?? []) bump(e.date, e.amountCents);
 
   // Walk the horizon, accumulating.
   const series: CashDay[] = [];
