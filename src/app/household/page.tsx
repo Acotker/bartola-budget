@@ -4,7 +4,8 @@ import { headers } from "next/headers";
 import { getSessionUserId } from "@/lib/auth";
 import { getHouseholdView } from "@/lib/data";
 import { createInviteAction } from "@/app/invite-actions";
-import { formatCents } from "@/lib/format";
+import { logAdvanceAction, settleAdvanceAction } from "@/app/advance-actions";
+import { formatCents, formatShortDate } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -152,6 +153,98 @@ export default async function HouseholdPage({
               smooth it over.
             </p>
           )}
+
+          {/* Advances — move liquidity only, never the pool or either daily (E6) */}
+          <section className="mt-8">
+            <h2 className="font-heading text-ink text-base font-bold">
+              Advances
+            </h2>
+            <p className="text-muted mt-1 text-xs leading-5">
+              Covering something for each other while your calendars don&apos;t
+              line up. It moves cash, not your Safe-to-Spend.
+            </p>
+
+            {view.advances.length > 0 && (
+              <ul className="mt-3 space-y-2">
+                {view.advances.map((a) => (
+                  <li
+                    key={a.id}
+                    className="bg-card border-line flex items-center justify-between rounded-xl border px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-ink text-sm font-bold">
+                        {a.direction === "you_gave" ? (
+                          <>
+                            {a.otherName} owes you {formatCents(a.amountCents)}
+                          </>
+                        ) : (
+                          <>
+                            You owe {a.otherName} {formatCents(a.amountCents)}
+                          </>
+                        )}
+                      </p>
+                      <p className="text-muted text-xs">
+                        {formatShortDate(a.date)}
+                        {a.expectedSettleDate &&
+                          ` — settles ${formatShortDate(a.expectedSettleDate)}`}
+                      </p>
+                    </div>
+                    <form action={settleAdvanceAction}>
+                      <input type="hidden" name="advanceId" value={a.id} />
+                      <button
+                        type="submit"
+                        className="text-primary shrink-0 text-xs font-bold"
+                      >
+                        Mark settled
+                      </button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {view.otherMembers.length > 0 && (
+              <form
+                action={logAdvanceAction}
+                className="bg-card border-line mt-3 space-y-3 rounded-2xl border p-4"
+              >
+                <p className="text-ink/70 text-xs">I&apos;m covering this for</p>
+                <select
+                  name="toMemberId"
+                  className="bg-surface text-ink w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+                >
+                  {view.otherMembers.map((m) => (
+                    <option key={m.memberId} value={m.memberId}>
+                      {m.displayName}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  name="amount"
+                  inputMode="decimal"
+                  required
+                  placeholder="Amount ($)"
+                  className="bg-surface text-ink tnum w-full rounded-xl px-3 py-2.5 text-sm font-bold outline-none"
+                />
+                <div>
+                  <label className="text-ink/50 text-xs font-bold uppercase tracking-wider">
+                    Settles around (optional)
+                  </label>
+                  <input
+                    name="expectedSettleDate"
+                    type="date"
+                    className="bg-surface text-ink mt-1 w-full rounded-xl px-3 py-2 text-sm outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="border-primary text-primary flex h-11 w-full items-center justify-center rounded-full border text-sm font-bold active:scale-[0.98]"
+                >
+                  Log advance
+                </button>
+              </form>
+            )}
+          </section>
         </>
       )}
     </main>

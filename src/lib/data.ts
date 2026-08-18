@@ -679,12 +679,30 @@ export interface HouseholdMemberView {
   hasCrunch: boolean;
 }
 
+/** An inter-member advance from the current viewer's side of it (E6, §3.7).
+ *  "you_gave" = you're the payer, waiting to be paid back; "you_owe" = you're
+ *  the one who received and still owes it. */
+export interface HouseholdAdvanceView {
+  id: string;
+  direction: "you_gave" | "you_owe";
+  otherMemberId: string;
+  otherName: string;
+  amountCents: number;
+  date: string;
+  expectedSettleDate: string | null;
+  status: "open" | "settled";
+}
+
 export interface HouseholdView {
   asOf: string;
   members: HouseholdMemberView[];
   /** The shared Safe-to-Spend bucket ("can we afford dinner?"), or null. */
   shared: { name: string; balanceCents: number } | null;
   householdHasCrunch: boolean;
+  /** Other members you could log an advance with. */
+  otherMembers: { memberId: string; displayName: string }[];
+  /** Open advances involving the viewer, newest first. */
+  advances: HouseholdAdvanceView[];
 }
 
 /** Assemble the household from the DB and compute all three Safe-to-Spends.
@@ -872,11 +890,42 @@ export async function getHouseholdView(
       }
     : null;
 
+  const meRow = dbMembers.find((m) => m.userId === userId);
+  const nameById = new Map(
+    dbMembers.map((m) => [m.id, m.displayName || "Partner"]),
+  );
+  const otherMembers = dbMembers
+    .filter((m) => m.userId !== userId)
+    .map((m) => ({ memberId: m.id, displayName: nameById.get(m.id) ?? "Partner" }));
+
+  const advanceViews: HouseholdAdvanceView[] = meRow
+    ? dbAdvances
+        .filter((a) => a.status === "open")
+        .filter((a) => a.fromMemberId === meRow.id || a.toMemberId === meRow.id)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))
+        .map((a) => {
+          const gave = a.fromMemberId === meRow.id;
+          const otherId = gave ? a.toMemberId : a.fromMemberId;
+          return {
+            id: a.id,
+            direction: gave ? "you_gave" : "you_owe",
+            otherMemberId: otherId,
+            otherName: nameById.get(otherId) ?? "Partner",
+            amountCents: a.amountCents,
+            date: a.date,
+            expectedSettleDate: a.expectedSettleDate,
+            status: a.status as "open" | "settled",
+          };
+        })
+    : [];
+
   return {
     asOf: APP_ASOF,
     members,
     shared,
     householdHasCrunch: householdCash(engineHousehold, APP_ASOF).crunch != null,
+    otherMembers,
+    advances: advanceViews,
   };
 }
 
