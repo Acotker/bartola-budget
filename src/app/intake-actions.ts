@@ -38,7 +38,10 @@ export async function createIntake(payload: IntakePayload): Promise<void> {
       members: {
         create: {
           userId,
-          displayName: "You",
+          // Empty, not "You" — that's a view-layer label for the viewer's own
+          // row (getHouseholdView), and would otherwise show literally as "You"
+          // to a partner looking at this member.
+          displayName: "",
           role: "owner",
           bufferCents: nonNeg(payload.bufferCents),
           assets: {

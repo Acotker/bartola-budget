@@ -54,7 +54,9 @@ export async function backfillUser(userId: string): Promise<BackfillResult> {
       members: {
         create: {
           userId,
-          displayName: "You",
+          // Empty, not "You" — that's a view-layer label for the viewer's own
+          // row, and would otherwise show literally as "You" to a partner.
+          displayName: "",
           role: m.member.role,
           bufferCents: m.member.bufferCents,
           assets: {
