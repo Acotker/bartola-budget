@@ -25,6 +25,12 @@ body {
   font-family: var(--font-nunito), Arial, Helvetica, sans-serif;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
 /* Tabular figures everywhere money appears, so digits don't jitter on update. */
 .tnum {
   font-variant-numeric: tabular-nums;

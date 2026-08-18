@@ -72,6 +72,16 @@ model SpendEntry {
   programSpend   ProgramSpend? @relation(fields: [programSpendId], references: [id], onDelete: SetNull)
 }
 
+/// Email fallback on the public landing page (spec §4 Final CTA). Not a
+/// signup — no account or session is created from this; just a retrievable
+/// list of interested addresses to follow up with later.
+model EmailSignup {
+  id        String   @id @default(cuid())
+  email     String
+  source    String?
+  createdAt DateTime @default(now())
+}
+
 model PlanAdjustment {
   id          String   @id @default(cuid())
   planId      String

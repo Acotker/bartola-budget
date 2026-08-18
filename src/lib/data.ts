@@ -145,6 +145,9 @@ export interface HomeView {
   spentTodayTotalCents: number;
   // for the reporting flow / new-program screen
   programs: { id: string; name: string }[];
+  // Analytics (spec §6.2): a real-calendar-time check, independent of the
+  // APP_ASOF demo clock, for the returned_d7 event.
+  returnedD7: boolean;
 }
 
 export async function getHomeView(userId: string): Promise<HomeView | null> {
@@ -164,6 +167,11 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     input,
     addDays(APP_ASOF, 1),
   ).baselineCents;
+
+  const daysSinceOnboarding = Math.floor(
+    (Date.now() - plan.createdAt.getTime()) / 86_400_000,
+  );
+  const returnedD7 = daysSinceOnboarding >= 2 && daysSinceOnboarding <= 7;
 
   const spentTodayS2sCents = input.spends
     .filter((s) => s.date === APP_ASOF && s.type === "s2s")
@@ -242,6 +250,7 @@ export async function getHomeView(userId: string): Promise<HomeView | null> {
     programs: input.programs
       .filter((p) => p.status === "active")
       .map((p) => ({ id: p.id, name: p.name })),
+    returnedD7,
   };
 }
 

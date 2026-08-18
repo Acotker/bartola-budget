@@ -16,7 +16,7 @@ export default async function EditSpendPage({
   const userId = await getSessionUserId();
   if (!userId) redirect("/login");
   const entry = await getSpendEntry(userId, id);
-  if (!entry) redirect("/");
+  if (!entry) redirect("/home");
 
   const source =
     entry.type === "program"
@@ -26,7 +26,7 @@ export default async function EditSpendPage({
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 pb-8 pt-12">
       <div className="flex items-center justify-between">
-        <Link href="/" className="text-muted text-[15px]">
+        <Link href="/home" className="text-muted text-[15px]">
           Cancel
         </Link>
         <span className="font-heading text-ink text-base font-semibold">
